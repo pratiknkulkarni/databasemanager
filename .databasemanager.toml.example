@@ -1,0 +1,6 @@
+database_hostname = ""
+database_password = ""
+database_port =
+infisical_project_id = ""
+infisical_client_id = ""
+infisical_client_secret = ""

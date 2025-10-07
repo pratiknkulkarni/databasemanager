@@ -1,0 +1,7 @@
+database_hostname: ""
+database_port:
+database_password: ""
+
+infisical_project_id: ""
+infisical_client_id: ""
+infisical_client_secret: ""
