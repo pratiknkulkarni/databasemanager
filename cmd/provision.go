@@ -28,13 +28,7 @@ var (
 var provisionCmd = &cobra.Command{
 	Use:   "provision",
 	Short: "Provision a new isolated application database",
-	Long: `Provision a new database, roles, and schema for an application.
-This will create:
-
-* A dedicated database
-* Owner, read-write, and read-only roles
-* Application login role with password
-* An isolated schema following least-privilege principles`,
+	Long:  `Provision a new database, roles, and schema for an application.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if appName == "" {
 			return fmt.Errorf("--app are required")
