@@ -10,6 +10,10 @@ type ProvisionOptions struct {
 	Schema      string
 }
 
+func (po *ProvisionOptions) Validate() error {
+	return nil
+}
+
 type Database interface {
 	Connect(ctx context.Context) error
 	Test(ctx context.Context) error

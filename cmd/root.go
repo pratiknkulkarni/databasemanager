@@ -129,9 +129,6 @@ func GetConfig(cmd *cobra.Command) *config.Config {
 
 func GetInfisicalClient(cmd *cobra.Command) *infisical.InfisicalClient {
 	client := cmd.Context().Value(infisicalClientKey{}).(*infisical.InfisicalClient)
-	//client2 := cmd.Context().Value(infisicalClientKey{})
-	//fmt.Println("getinclient")
-	fmt.Println(client)
 	return client
 }
 
