@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log"
@@ -14,7 +16,6 @@ import (
 	"github.com/praaatik/databasemanager/internal/database"
 )
 
-// TODO: hardcoding the appName and appPassword for now. I need to get this from the command line
 var (
 	appName      string
 	appPassword  string
@@ -24,7 +25,6 @@ var (
 	hidePassword bool
 )
 
-// provisionCmd represents the provision command
 var provisionCmd = &cobra.Command{
 	Use:   "provision",
 	Short: "Provision a new isolated application database",
@@ -40,20 +40,16 @@ This will create:
 			return fmt.Errorf("--app are required")
 		}
 
-		cfg := GetConfig(cmd)
-
-		// Init Postgres client
-		client, err := database.NewPostgresClient(cfg)
-		if err != nil {
-			return fmt.Errorf("failed to create postgres client: %w", err)
-		}
+		client := GetDatabaseClient(cmd)
+		// if client == nil {
+		// 	return fmt.Errorf("database client not present in the context")
+		// }
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		// TODO: generate random password
 		if appPassword == "" {
-			appPassword = "supersecret123"
+			appPassword = generateRandomPassword(16)
 			log.Printf("Generated random password for app=%s", appName)
 		}
 
@@ -65,27 +61,25 @@ This will create:
 			Schema:      schemaName,
 		}
 
+		if provisionOptions.Database == "" {
+			provisionOptions.Database = fmt.Sprintf("%s_db", provisionOptions.AppName)
+		}
+
+		if provisionOptions.User == "" {
+			provisionOptions.User = fmt.Sprintf("%s_user", provisionOptions.AppName)
+		}
+
+		if provisionOptions.Schema == "" {
+			provisionOptions.Schema = fmt.Sprintf("%s_data", provisionOptions.AppName)
+		}
+
 		log.Printf("Provisioning database for app=%s ...", appName)
+
 		if err := client.Provision(ctx, provisionOptions); err != nil {
 			return fmt.Errorf("failed to provision database: %w", err)
 		}
 
-		finalDB := provisionOptions.Database
-		if finalDB == "" {
-			finalDB = fmt.Sprintf("%s_db", provisionOptions.AppName)
-		}
-
-		finalUser := provisionOptions.User
-		if finalUser == "" {
-			finalUser = fmt.Sprintf("%s_user", provisionOptions.AppName)
-		}
-
-		finalSchema := provisionOptions.Schema
-		if finalSchema == "" {
-			finalSchema = fmt.Sprintf("%s_data", provisionOptions.AppName)
-		}
-
-		printProvisionSummary(os.Stdout, provisionOptions.AppName, finalDB, finalUser, finalSchema, provisionOptions.AppPassword, hidePassword)
+		printProvisionSummary(os.Stdout, provisionOptions.AppName, provisionOptions.Database, provisionOptions.User, provisionOptions.Schema, provisionOptions.AppPassword, hidePassword)
 
 		log.Printf("Provisioned database for app=%s", appName)
 		return nil
@@ -119,4 +113,12 @@ func printProvisionSummary(w io.Writer, app, db, user, schema, password string, 
 	fmt.Fprintf(tw, "Schema\t%s\n", schema)
 	fmt.Fprintf(tw, "Password\t%s\n", password)
 	_ = tw.Flush()
+}
+
+func generateRandomPassword(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("pw-fallback-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b)
 }

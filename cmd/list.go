@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/infisical/go-sdk"
+	infisical "github.com/infisical/go-sdk"
 	"github.com/praaatik/databasemanager/internal/config"
 	"github.com/spf13/cobra"
 )
