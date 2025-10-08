@@ -53,49 +53,68 @@ func (p *PostgresClient) Test(ctx context.Context) error {
 	return p.db.PingContext(ctx)
 }
 
-func (p *PostgresClient) Provision(ctx context.Context, appName, appPassword string) (err error) {
-	if strings.TrimSpace(appName) == "" {
-		return errors.New("appName must not be empty")
+func (p *PostgresClient) Provision(ctx context.Context, provisionOptions ProvisionOptions) (err error) {
+	appName := provisionOptions.AppName
+	appPassword := provisionOptions.AppPassword
+
+	databaseName := provisionOptions.Database
+	databaseUserName := provisionOptions.User
+	databaseSchemaName := provisionOptions.Schema
+
+	if databaseName == "" {
+		databaseName = fmt.Sprintf("%s_db", appName)
 	}
-	if len(appPassword) == 0 {
-		return errors.New("appPassword must not be empty")
+
+	if databaseUserName == "" {
+		databaseUserName = fmt.Sprintf("%s_user", appName)
+	}
+
+	if databaseSchemaName == "" {
+		databaseSchemaName = fmt.Sprintf("%s_data", appName)
+	}
+
+	if strings.TrimSpace(provisionOptions.AppName) == "" {
+		return errors.New("appName must not be empty")
 	}
 
 	if err = p.ensureConnection(ctx); err != nil {
 		return err
 	}
 
-	dbNameBase := fmt.Sprintf("%s_db", appName)
-	userNameBase := fmt.Sprintf("%s_user", appName)
-	schemaNameBase := fmt.Sprintf("%s_data", appName)
+	// dbNameBase := fmt.Sprintf("%s_db", appName)
+	// userNameBase := fmt.Sprintf("%s_user", appName)
+	// schemaNameBase := fmt.Sprintf("%s_data", appName)
 
-	dbName, err := validate(dbNameBase)
+	databaseName, err = validate(databaseName)
 	if err != nil {
 		return fmt.Errorf("invalid database name: %w", err)
 	}
-	userName, err := validate(userNameBase)
+
+	databaseUserName, err = validate(databaseUserName)
 	if err != nil {
 		return fmt.Errorf("invalid username: %w", err)
 	}
-	schemaName, err := validate(schemaNameBase)
+
+	databaseSchemaName, err = validate(databaseSchemaName)
 	if err != nil {
 		return fmt.Errorf("invalid schema name: %w", err)
 	}
 
-	exists, err := p.databaseExists(ctx, dbName)
+	exists, err := p.databaseExists(ctx, databaseName)
 	if err != nil {
 		return fmt.Errorf("check database exists: %w", err)
 	}
+
 	if exists {
-		return fmt.Errorf("database %q already exists", dbName)
+		return fmt.Errorf("database %q already exists", databaseName)
 	}
 
 	dbCreated := false
 	defer func() {
 		// rollback database and role creations
 		if err != nil && dbCreated {
-			_, _ = p.db.ExecContext(ctx, fmt.Sprintf(`DROP DATABASE IF EXISTS %s`, pq.QuoteIdentifier(dbName)))
-			_, _ = p.db.ExecContext(ctx, fmt.Sprintf(`DROP ROLE IF EXISTS %s`, pq.QuoteIdentifier(userName)))
+			_, _ = p.db.ExecContext(ctx, fmt.Sprintf(`DROP DATABASE IF EXISTS %s`, pq.QuoteIdentifier(databaseName)))
+			_, _ = p.db.ExecContext(ctx, fmt.Sprintf(`DROP ROLE IF EXISTS %s`, pq.QuoteIdentifier(databaseUserName)))
 		}
 	}()
 
@@ -103,24 +122,24 @@ func (p *PostgresClient) Provision(ctx context.Context, appName, appPassword str
 	defer cancel()
 
 	// create database
-	createDBSQL := fmt.Sprintf("CREATE DATABASE %s", pq.QuoteIdentifier(dbName))
+	createDBSQL := fmt.Sprintf("CREATE DATABASE %s", pq.QuoteIdentifier(databaseName))
 	if _, err = p.db.ExecContext(ctxTimeout, createDBSQL); err != nil {
-		return fmt.Errorf("create database %q: %w", dbName, err)
+		return fmt.Errorf("create database %q: %w", databaseName, err)
 	}
 	dbCreated = true
 
 	// create role
-	quotedUser := pq.QuoteIdentifier(userName)
+	quotedUser := pq.QuoteIdentifier(databaseUserName)
 	quotedPwd := pq.QuoteLiteral(appPassword)
 	createRoleSQL := fmt.Sprintf("CREATE ROLE %s WITH LOGIN PASSWORD %s", quotedUser, quotedPwd)
 	if _, err = p.db.ExecContext(ctxTimeout, createRoleSQL); err != nil {
-		return fmt.Errorf("create role %q: %w", userName, err)
+		return fmt.Errorf("create role %q: %w", databaseUserName, err)
 	}
 
 	// transfer db ownership
-	alterOwnerSQL := fmt.Sprintf("ALTER DATABASE %s OWNER TO %s", pq.QuoteIdentifier(dbName), quotedUser)
+	alterOwnerSQL := fmt.Sprintf("ALTER DATABASE %s OWNER TO %s", pq.QuoteIdentifier(databaseName), quotedUser)
 	if _, err = p.db.ExecContext(ctxTimeout, alterOwnerSQL); err != nil {
-		return fmt.Errorf("assign owner for database %q: %w", dbName, err)
+		return fmt.Errorf("assign owner for database %q: %w", databaseName, err)
 	}
 
 	// connect to the new database
@@ -129,17 +148,17 @@ func (p *PostgresClient) Provision(ctx context.Context, appName, appPassword str
 		p.cfg.DatabasePort,
 		p.cfg.DatabaseUser,
 		p.cfg.DatabasePassword,
-		dbName)
+		databaseName)
 
 	appDB, err := sql.Open("postgres", appDSN)
 	if err != nil {
-		return fmt.Errorf("open new database %q: %w", dbName, err)
+		return fmt.Errorf("open new database %q: %w", databaseName, err)
 	}
 
 	defer appDB.Close()
 
 	if err = appDB.PingContext(ctxTimeout); err != nil {
-		return fmt.Errorf("ping new database %q: %w", dbName, err)
+		return fmt.Errorf("ping new database %q: %w", databaseName, err)
 	}
 
 	appDB.SetMaxOpenConns(5)
@@ -148,9 +167,9 @@ func (p *PostgresClient) Provision(ctx context.Context, appName, appPassword str
 
 	// create schema
 	createSchemaSQL := fmt.Sprintf("CREATE SCHEMA %s AUTHORIZATION %s",
-		pq.QuoteIdentifier(schemaName), quotedUser)
+		pq.QuoteIdentifier(databaseSchemaName), quotedUser)
 	if _, err = appDB.ExecContext(ctxTimeout, createSchemaSQL); err != nil {
-		return fmt.Errorf("create schema %q: %w", schemaName, err)
+		return fmt.Errorf("create schema %q: %w", databaseSchemaName, err)
 	}
 
 	// isolate "public"
@@ -163,17 +182,17 @@ func (p *PostgresClient) Provision(ctx context.Context, appName, appPassword str
 
 	// revoke privileges from app user
 	if _, err = appDB.ExecContext(ctx, fmt.Sprintf("REVOKE ALL ON SCHEMA public FROM %s", quotedUser)); err != nil {
-		return fmt.Errorf("revoke privileges on public schema from %q: %w", userName, err)
+		return fmt.Errorf("revoke privileges on public schema from %q: %w", databaseUserName, err)
 	}
 
 	// revoke CONNECTion for other users
-	if _, err = p.db.ExecContext(ctxTimeout, fmt.Sprintf("REVOKE CONNECT ON DATABASE %s FROM PUBLIC", pq.QuoteIdentifier(dbName))); err != nil {
-		return fmt.Errorf("revoke CONNECT on %q: %w", dbName, err)
+	if _, err = p.db.ExecContext(ctxTimeout, fmt.Sprintf("REVOKE CONNECT ON DATABASE %s FROM PUBLIC", pq.QuoteIdentifier(databaseName))); err != nil {
+		return fmt.Errorf("revoke CONNECT on %q: %w", databaseName, err)
 	}
 
-	setSearchPathSQL := fmt.Sprintf("ALTER ROLE %s SET search_path = %s", quotedUser, pq.QuoteIdentifier(schemaName))
+	setSearchPathSQL := fmt.Sprintf("ALTER ROLE %s SET search_path = %s", quotedUser, pq.QuoteIdentifier(databaseSchemaName))
 	if _, err = p.db.ExecContext(ctxTimeout, setSearchPathSQL); err != nil {
-		return fmt.Errorf("set search_path for role %q: %w", userName, err)
+		return fmt.Errorf("set search_path for role %q: %w", databaseUserName, err)
 	}
 
 	return nil
