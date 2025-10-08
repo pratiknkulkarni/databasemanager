@@ -3,7 +3,10 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
+	"os"
+	"text/tabwriter"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -13,11 +16,12 @@ import (
 
 // TODO: hardcoding the appName and appPassword for now. I need to get this from the command line
 var (
-	appName     string
-	appPassword string
-	dbName      string
-	userName    string
-	schemaName  string
+	appName      string
+	appPassword  string
+	dbName       string
+	userName     string
+	schemaName   string
+	hidePassword bool
 )
 
 // provisionCmd represents the provision command
@@ -66,6 +70,23 @@ This will create:
 			return fmt.Errorf("failed to provision database: %w", err)
 		}
 
+		finalDB := provisionOptions.Database
+		if finalDB == "" {
+			finalDB = fmt.Sprintf("%s_db", provisionOptions.AppName)
+		}
+
+		finalUser := provisionOptions.User
+		if finalUser == "" {
+			finalUser = fmt.Sprintf("%s_user", provisionOptions.AppName)
+		}
+
+		finalSchema := provisionOptions.Schema
+		if finalSchema == "" {
+			finalSchema = fmt.Sprintf("%s_data", provisionOptions.AppName)
+		}
+
+		printProvisionSummary(os.Stdout, provisionOptions.AppName, finalDB, finalUser, finalSchema, provisionOptions.AppPassword, hidePassword)
+
 		log.Printf("Provisioned database for app=%s", appName)
 		return nil
 	},
@@ -79,6 +100,23 @@ func init() {
 	provisionCmd.Flags().StringVar(&dbName, "dbname", "", "Override default generated database name (optional)")
 	provisionCmd.Flags().StringVar(&userName, "user", "", "Override default generated database user (optional)")
 	provisionCmd.Flags().StringVar(&schemaName, "schema", "", "Override default generated schema name (optional)")
+	provisionCmd.Flags().BoolVar(&hidePassword, "hide-password", false, "Hide password in the summary output")
 
 	_ = provisionCmd.MarkFlagRequired("app")
+}
+
+func printProvisionSummary(w io.Writer, app, db, user, schema, password string, hide bool) {
+	if hide {
+		password = "*****"
+	}
+
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "Field\tValue")
+	fmt.Fprintln(tw, "-----\t-----")
+	fmt.Fprintf(tw, "App Name\t%s\n", app)
+	fmt.Fprintf(tw, "Database\t%s\n", db)
+	fmt.Fprintf(tw, "User\t%s\n", user)
+	fmt.Fprintf(tw, "Schema\t%s\n", schema)
+	fmt.Fprintf(tw, "Password\t%s\n", password)
+	_ = tw.Flush()
 }
