@@ -11,6 +11,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	infisical "github.com/infisical/go-sdk"
 	"github.com/spf13/cobra"
 
 	"github.com/praaatik/databasemanager/internal/database"
@@ -71,6 +72,50 @@ var provisionCmd = &cobra.Command{
 
 		if err := client.Provision(ctx, provisionOptions); err != nil {
 			return fmt.Errorf("failed to provision database: %w", err)
+		}
+
+		infisicalClient := GetInfisicalClient(cmd)
+		if infisicalClient == nil {
+			log.Printf("no infisical client in the context")
+		} else {
+			cfg := GetConfig(cmd)
+			env := "dev"
+			if eFlag, _ := cmd.Flags().GetString("environment"); eFlag != "" {
+				env = eFlag
+			}
+
+			// testing for folder creation
+			_, err := infisicalClient.Folders().Create(infisical.CreateFolderOptions{
+				ProjectID:   cfg.InfisicalProjectId,
+				Name:        provisionOptions.AppName,
+				Environment: env,
+			})
+
+			if err != nil {
+				return fmt.Errorf("failed to create folder in Infisical: %w", err)
+			}
+
+			secretPath := fmt.Sprintf("/%s", provisionOptions.AppName)
+			// secretPath := "/g"
+			secrets := []infisical.BatchCreateSecret{
+				{SecretKey: "DB_NAME", SecretValue: provisionOptions.Database},
+				{SecretKey: "DB_USER", SecretValue: provisionOptions.User},
+				{SecretKey: "DB_PASSWORD", SecretValue: provisionOptions.AppPassword},
+				{SecretKey: "DB_SCHEMA", SecretValue: provisionOptions.Schema},
+				{SecretKey: "DB_HOST", SecretValue: cfg.DatabaseHostname},
+				{SecretKey: "DB_PORT", SecretValue: fmt.Sprintf("%d", cfg.DatabasePort)},
+			}
+
+			_, err = infisicalClient.Secrets().Batch().Create(infisical.BatchCreateSecretsOptions{
+				Environment: env,
+				SecretPath:  secretPath,
+				ProjectID:   cfg.InfisicalProjectId,
+				Secrets:     secrets,
+			})
+			if err != nil {
+				return fmt.Errorf("failed to create secrets in Infisical: %w", err)
+			}
+			log.Printf("secrets for app=%s created in Infisical at path=%s env=%s", provisionOptions.AppName, secretPath, env)
 		}
 
 		printProvisionSummary(os.Stdout, provisionOptions.AppName, provisionOptions.Database, provisionOptions.User, provisionOptions.Schema, provisionOptions.AppPassword, hidePassword)
