@@ -19,11 +19,13 @@ var (
 	listType      string
 	listEnv       string
 	listShowValue bool
+	listSecretKey string
 )
 
 const (
 	typeApps    = "apps"
 	typeSecrets = "secrets"
+	typeSecret  = "secret"
 )
 
 var listCmd = &cobra.Command{
@@ -33,7 +35,7 @@ var listCmd = &cobra.Command{
 from the connected database server.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if listType == "" {
-			return fmt.Errorf("--type is required (options: apps, secrets)")
+			return fmt.Errorf("--type is required (options: apps, secrets, secret)")
 		}
 
 		if !isValidType(listType) {
@@ -52,6 +54,8 @@ from the connected database server.`,
 			return listApps(cmd, infisicalClient, cfg)
 		case typeSecrets:
 			return listSecrets(cmd, infisicalClient, cfg)
+		case typeSecret:
+			return listSecret(cmd, infisicalClient, cfg)
 		default:
 			return fmt.Errorf("unknown type: %s", listType)
 		}
@@ -150,6 +154,41 @@ func listSecrets(cmd *cobra.Command, infClient infisical.InfisicalClientInterfac
 	return outputSecretsTable(secrets)
 }
 
+func listSecret(cmd *cobra.Command, infisicalClient infisical.InfisicalClientInterface, cfg *config.Config) error {
+	secretPath := fmt.Sprintf("/%s", listApp)
+
+	fmt.Printf("Fetching secret %q from app %q (environment: %s)...\n\n", listSecretKey, listApp, listEnv)
+
+	secrets, err := infisicalClient.Secrets().List(infisical.ListSecretsOptions{
+		Environment: listEnv,
+		ProjectID:   cfg.InfisicalProjectId,
+		SecretPath:  secretPath,
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to list secrets for app %q: %w", listApp, err)
+	}
+
+	// Find the specific secret
+	var foundSecret *models.Secret
+	for i := range secrets {
+		if secrets[i].SecretKey == listSecretKey {
+			foundSecret = &secrets[i]
+			break
+		}
+	}
+
+	if foundSecret == nil {
+		return fmt.Errorf("secret %q not found in app %q", listSecretKey, listApp)
+	}
+
+	if listFormat == "json" {
+		return outputSecretJSON(foundSecret)
+	}
+
+	return outputSecretTable(foundSecret)
+}
+
 // maskSecretValue masks sensitive values based on the secret key
 func maskSecretValue(key, value string) string {
 	// I am adding this, so I could filter out SECRETSs and TOKENs later on.
@@ -169,7 +208,7 @@ func maskSecretValue(key, value string) string {
 
 // isValidType checks if the provided type is valid
 func isValidType(t string) bool {
-	validTypes := []string{typeApps, typeSecrets}
+	validTypes := []string{typeApps, typeSecrets, typeSecret}
 	for _, valid := range validTypes {
 		if t == valid {
 			return true
@@ -218,12 +257,49 @@ func outputSecretsJSON(secrets []infisical.Secret) error {
 	return nil
 }
 
+// outputSecretTable renders a single secret in table format
+func outputSecretTable(secret *infisical.Secret) error {
+	t := table.NewWriter()
+	t.AppendHeader(table.Row{"Secret Key", "Secret Value"})
+
+	value := secret.SecretValue
+	if !listShowValue {
+		value = maskSecretValue(secret.SecretKey, secret.SecretValue)
+	}
+	t.AppendRow(table.Row{secret.SecretKey, value})
+
+	fmt.Println(t.Render())
+	return nil
+}
+
+// outputSecretJSON renders a single secret in JSON format
+func outputSecretJSON(secret *infisical.Secret) error {
+	value := secret.SecretValue
+	if !listShowValue {
+		value = maskSecretValue(secret.SecretKey, secret.SecretValue)
+	}
+
+	data := map[string]string{
+		"secret_key":   secret.SecretKey,
+		"secret_value": value,
+	}
+
+	jsonData, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal secret to JSON: %w", err)
+	}
+
+	fmt.Println(string(jsonData))
+	return nil
+}
+
 func init() {
 	rootCmd.AddCommand(listCmd)
 
-	listCmd.Flags().StringVar(&listType, "type", "", "Type to list: apps, secrets (required)")
+	listCmd.Flags().StringVar(&listType, "type", "", "Type to list: apps, secrets, secret (required)")
 	listCmd.Flags().StringVar(&listApp, "app", "", "Application name (required when --type is secrets)")
 	listCmd.Flags().StringVar(&listEnv, "env", "dev", "Infisical environment")
 	listCmd.Flags().BoolVar(&listShowValue, "show-values", false, "Show actual secret values (default: masked for sensitive data)")
 	listCmd.Flags().StringVar(&listFormat, "format", "table", "Output format: table, json")
+	listCmd.Flags().StringVar(&listSecretKey, "key", "", "Secret key name (required when --type is secret)")
 }
