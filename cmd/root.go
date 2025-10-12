@@ -12,8 +12,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-// var cfg config.Config
-// var cfgFile string
+// configKey is used to store the configuration in the context
 type configKey struct{}
 
 // infisicalClientKey is used to pass the infisical client as a context
@@ -33,40 +32,30 @@ Cobra is a CLI library for Go that empowers applications.
 This application is a tool to generate the needed files
 to quickly create a Cobra application.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Println("running root persistenprerune")
 		initializeViper()
 		if err := initConfig(); err != nil {
 			return err
 		}
 
-		ctx := context.WithValue(cmd.Context(), configKey{}, &cfg)
-
 		infisicalClient, err := initInfisicalClient(&cfg)
 		if err != nil {
-			return fmt.Errorf("error init infisical client", err)
+			return fmt.Errorf("failed to initialize infisical client: %w", err)
 		}
-		ctx = context.WithValue(ctx, infisicalClientKey{}, infisicalClient)
 
 		databaseClient, err := initDatabaseClient(&cfg)
 		if err != nil {
-			return fmt.Errorf("error init database client")
+			return fmt.Errorf("failed to initialize database client: %w", err)
 		}
-		ctx = context.WithValue(ctx, databaseClientKey{}, databaseClient)
 
-		fmt.Println("setting the context")
-		fmt.Println(ctx)
+		// attach contexts together instead of one by one
+		ctx := context.WithValue(cmd.Context(), configKey{}, &cfg)
+		ctx = context.WithValue(ctx, infisicalClientKey{}, infisicalClient)
+		ctx = context.WithValue(ctx, databaseClientKey{}, databaseClient)
 		cmd.SetContext(ctx)
+
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Printf("Configuration loaded:\n")
-		fmt.Printf("  Database Hostname: %s\n", cfg.DatabaseHostname)
-		fmt.Printf("  Database Port: %d\n", cfg.DatabasePort)
-		fmt.Printf("  Database Password: %s\n", cfg.DatabasePassword)
-		fmt.Printf("  Infisical Project ID: %s\n", cfg.InfisicalProjectId)
-		fmt.Printf("  Infisical Client ID: %s\n", cfg.InfisicalClientId)
-		fmt.Printf("  Infisical Client Secret: %s\n", cfg.InfisicalClientSecret)
-		fmt.Printf("  Infisical Site URL: %s\n", cfg.InfisicalSiteURL)
 		return nil
 	},
 }
@@ -81,17 +70,17 @@ func Execute() {
 }
 
 func init() {
-	fmt.Println("calling global init")
 	cobra.OnInitialize(initializeViper)
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default searches for .databasemanager.yaml in home directory and current directory)")
 
 	rootCmd.PersistentFlags().String("database-hostname", "localhost", "Database hostname")
 	rootCmd.PersistentFlags().Int("database-port", 5432, "Database port")
-	rootCmd.PersistentFlags().String("database-password", "secretsecretsarenofun", "Database password")
+	rootCmd.PersistentFlags().String("database-password", "", "Database password")
 	rootCmd.PersistentFlags().String("infisical-project-id", "", "Infisical project ID")
 	rootCmd.PersistentFlags().String("infisical-client-id", "", "Infisical client ID")
 	rootCmd.PersistentFlags().String("infisical-client-secret", "", "Infisical client secret")
+	rootCmd.PersistentFlags().String("infisical-site-url", "http://localhost:8080", "Infisical site URL")
 
 	viper.BindPFlag("database_hostname", rootCmd.PersistentFlags().Lookup("database-hostname"))
 	viper.BindPFlag("database_port", rootCmd.PersistentFlags().Lookup("database-port"))
@@ -101,7 +90,7 @@ func init() {
 	viper.BindPFlag("infisical_client_secret", rootCmd.PersistentFlags().Lookup("infisical-client-secret"))
 	viper.BindPFlag("infisical_site_url", rootCmd.PersistentFlags().Lookup("infisical-site-url"))
 
-	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	//rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }
 
 func initInfisicalClient(cfg *config.Config) (infisical.InfisicalClientInterface, error) {
@@ -128,9 +117,13 @@ func GetConfig(cmd *cobra.Command) *config.Config {
 	return cmd.Context().Value(configKey{}).(*config.Config)
 }
 
-func GetInfisicalClient(cmd *cobra.Command) *infisical.InfisicalClient {
-	client := cmd.Context().Value(infisicalClientKey{}).(*infisical.InfisicalClient)
-	return client
+//func GetInfisicalClient(cmd *cobra.Command) *infisical.InfisicalClient {
+//	client := cmd.Context().Value(infisicalClientKey{}).(*infisical.InfisicalClient)
+//	return client
+//}
+
+func GetInfisicalClient(cmd *cobra.Command) infisical.InfisicalClientInterface {
+	return cmd.Context().Value(infisicalClientKey{}).(infisical.InfisicalClientInterface)
 }
 
 func GetDatabaseClient(cmd *cobra.Command) database.Database {
