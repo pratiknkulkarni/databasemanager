@@ -80,7 +80,7 @@ func init() {
 	rootCmd.PersistentFlags().String("infisical-project-id", "", "Infisical project ID")
 	rootCmd.PersistentFlags().String("infisical-client-id", "", "Infisical client ID")
 	rootCmd.PersistentFlags().String("infisical-client-secret", "", "Infisical client secret")
-	rootCmd.PersistentFlags().String("infisical-site-url", "http://localhost:8080", "Infisical site URL")
+	rootCmd.PersistentFlags().String("infisical-site-url", "", "Infisical site URL")
 
 	viper.BindPFlag("database_hostname", rootCmd.PersistentFlags().Lookup("database-hostname"))
 	viper.BindPFlag("database_port", rootCmd.PersistentFlags().Lookup("database-port"))
