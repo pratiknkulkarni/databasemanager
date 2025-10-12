@@ -37,9 +37,6 @@ var provisionCmd = &cobra.Command{
 		}
 
 		client := GetDatabaseClient(cmd)
-		// if client == nil {
-		// 	return fmt.Errorf("database client not present in the context")
-		// }
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()

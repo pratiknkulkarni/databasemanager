@@ -79,6 +79,7 @@ func (p *PostgresClient) Test(ctx context.Context) error {
 		p.mu.RUnlock()
 	}
 
+	fmt.Println("test working")
 	return db.PingContext(ctx)
 }
 
