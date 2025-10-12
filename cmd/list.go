@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -12,11 +13,11 @@ import (
 )
 
 var (
-	listApp         string
-	listEnvironment string
-	listType        string
-	listEnv         string
-	listShowValue   bool
+	listApp       string
+	listFormat    string
+	listType      string
+	listEnv       string
+	listShowValue bool
 )
 
 const (
@@ -102,23 +103,19 @@ func listSecrets(cmd *cobra.Command, infClient infisical.InfisicalClientInterfac
 	}
 
 	if len(secrets) == 0 {
-		fmt.Printf("No secrets found for app %q in environment %q\n", listApp, listEnv)
+		if listFormat == "json" {
+			fmt.Println("[]")
+		} else {
+			fmt.Printf("No secrets found for app %q in environment %q\n", listApp, listEnv)
+		}
 		return nil
 	}
 
-	t := table.NewWriter()
-	t.AppendHeader(table.Row{"Secret Key", "Secret Value"})
-
-	for _, secret := range secrets {
-		value := secret.SecretValue
-		if !listShowValue {
-			value = maskSecretValue(secret.SecretKey, secret.SecretValue)
-		}
-		t.AppendRow(table.Row{secret.SecretKey, value})
+	if listFormat == "json" {
+		return outputSecretsJSON(secrets)
 	}
 
-	fmt.Println(t.Render())
-	return nil
+	return outputSecretsTable(secrets)
 }
 
 // maskSecretValue masks sensitive values based on the secret key
@@ -149,6 +146,46 @@ func isValidType(t string) bool {
 	return false
 }
 
+// outputSecretsTable renders secrets in table format
+func outputSecretsTable(secrets []infisical.Secret) error {
+	t := table.NewWriter()
+	t.AppendHeader(table.Row{"Secret Key", "Secret Value"})
+
+	for _, secret := range secrets {
+		value := secret.SecretValue
+		if !listShowValue {
+			value = maskSecretValue(secret.SecretKey, secret.SecretValue)
+		}
+		t.AppendRow(table.Row{secret.SecretKey, value})
+	}
+
+	fmt.Println(t.Render())
+	return nil
+}
+
+// outputSecretsJSON displays secrets in JSON format
+func outputSecretsJSON(secrets []infisical.Secret) error {
+	data := make([]map[string]string, 0, len(secrets))
+	for _, secret := range secrets {
+		value := secret.SecretValue
+		if !listShowValue {
+			value = maskSecretValue(secret.SecretKey, secret.SecretValue)
+		}
+		data = append(data, map[string]string{
+			"secret_key":   secret.SecretKey,
+			"secret_value": value,
+		})
+	}
+
+	jsonData, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal secrets to JSON: %w", err)
+	}
+
+	fmt.Println(string(jsonData))
+	return nil
+}
+
 func init() {
 	rootCmd.AddCommand(listCmd)
 
@@ -156,4 +193,5 @@ func init() {
 	listCmd.Flags().StringVar(&listApp, "app", "", "Application name (required when --type is secrets)")
 	listCmd.Flags().StringVar(&listEnv, "env", "dev", "Infisical environment")
 	listCmd.Flags().BoolVar(&listShowValue, "show-values", false, "Show actual secret values (default: masked for sensitive data)")
+	listCmd.Flags().StringVar(&listFormat, "format", "table", "Output format: table, json")
 }
