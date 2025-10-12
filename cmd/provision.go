@@ -24,6 +24,7 @@ var (
 	userName     string
 	schemaName   string
 	hidePassword bool
+	environment  string
 )
 
 var provisionCmd = &cobra.Command{
@@ -80,7 +81,7 @@ var provisionCmd = &cobra.Command{
 		} else {
 			cfg := GetConfig(cmd)
 			env := "dev"
-			if eFlag, _ := cmd.Flags().GetString("environment"); eFlag != "" {
+			if eFlag, _ := cmd.Flags().GetString("env"); eFlag != "" {
 				env = eFlag
 			}
 
@@ -134,11 +135,13 @@ func init() {
 	provisionCmd.Flags().StringVar(&userName, "user", "", "Override default generated database user (optional)")
 	provisionCmd.Flags().StringVar(&schemaName, "schema", "", "Override default generated schema name (optional)")
 	provisionCmd.Flags().BoolVar(&hidePassword, "hide-password", false, "Hide password in the summary output")
+	provisionCmd.Flags().StringVar(&environment, "env", "dev", "Infisical environment to write secrets into")
 
 	_ = provisionCmd.MarkFlagRequired("app")
 }
 
 func printProvisionSummary(w io.Writer, app, db, user, schema, password string, hide bool) {
+	// TODO: find a better way to hide this password, possible length matching the length of the password
 	if hide {
 		password = "*****"
 	}

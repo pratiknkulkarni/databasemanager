@@ -11,6 +11,7 @@ type InfisicalConfig struct {
 	InfisicalProjectId    string `mapstructure:"infisical_project_id"`
 	InfisicalClientId     string `mapstructure:"infisical_client_id"`
 	InfisicalClientSecret string `mapstructure:"infisical_client_secret"`
+	InfisicalSiteURL      string `mapstructure:"infisical_site_url"`
 }
 
 type Config struct {

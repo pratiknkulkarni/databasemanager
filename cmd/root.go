@@ -43,7 +43,7 @@ to quickly create a Cobra application.`,
 
 		infisicalClient, err := initInfisicalClient(&cfg)
 		if err != nil {
-			return fmt.Errorf("error init infisical client")
+			return fmt.Errorf("error init infisical client", err)
 		}
 		ctx = context.WithValue(ctx, infisicalClientKey{}, infisicalClient)
 
@@ -66,6 +66,7 @@ to quickly create a Cobra application.`,
 		fmt.Printf("  Infisical Project ID: %s\n", cfg.InfisicalProjectId)
 		fmt.Printf("  Infisical Client ID: %s\n", cfg.InfisicalClientId)
 		fmt.Printf("  Infisical Client Secret: %s\n", cfg.InfisicalClientSecret)
+		fmt.Printf("  Infisical Site URL: %s\n", cfg.InfisicalSiteURL)
 		return nil
 	},
 }
@@ -98,13 +99,14 @@ func init() {
 	viper.BindPFlag("infisical_project_id", rootCmd.PersistentFlags().Lookup("infisical-project-id"))
 	viper.BindPFlag("infisical_client_id", rootCmd.PersistentFlags().Lookup("infisical-client-id"))
 	viper.BindPFlag("infisical_client_secret", rootCmd.PersistentFlags().Lookup("infisical-client-secret"))
+	viper.BindPFlag("infisical_site_url", rootCmd.PersistentFlags().Lookup("infisical-site-url"))
 
 	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }
 
 func initInfisicalClient(cfg *config.Config) (infisical.InfisicalClientInterface, error) {
 	client := infisical.NewInfisicalClient(context.Background(), infisical.Config{
-		SiteUrl:          "http://localhost:3333",
+		SiteUrl:          cfg.InfisicalSiteURL,
 		AutoTokenRefresh: true,
 	})
 
@@ -113,7 +115,6 @@ func initInfisicalClient(cfg *config.Config) (infisical.InfisicalClientInterface
 		return nil, fmt.Errorf("authentication failed: %w", err)
 	}
 
-	fmt.Println("Infisical client authenticated successfully")
 	return client, nil
 }
 
