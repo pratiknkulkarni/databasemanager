@@ -22,19 +22,26 @@ var (
 var listCmd = &cobra.Command{
 	Use:   "list [APP] [SECRET_KEY]",
 	Short: "list will list all the secrets stored in Infisical",
-	Long: `List all secrets from Infisical and optionally list all databases 
-from the connected database server.`,
+	Long: `List all apps, all secrets in an app, or a specific secret.
+    
+	Examples:
+	  databasemanager list              					# List all apps
+	  databasemanager list myapp        					# List all secrets in myapp
+	  databasemanager list myapp DB_PASSWORD  				# Get specific secret
+	  databasemanager list myapp --show-values				# Display sensitive information instead of masking it
+	  databasemanager list myapp DB_PASSWORD --format json	# Display output in json format instead of table`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		infisicalClient := GetInfisicalClient(cmd)
 		cfg := GetConfig(cmd)
+
 		switch len(args) {
 		case 0:
-			return listApps(cmd, infisicalClient, cfg)
+			return listApps(infisicalClient, cfg)
 		case 1:
 			//listApp = args[0]
-			return listSecrets(cmd, infisicalClient, cfg, args[0])
+			return listSecrets(infisicalClient, cfg, args[0])
 		case 2:
-			return getSecret(cmd, infisicalClient, cfg, args[0], args[1])
+			return getSecret(infisicalClient, cfg, args[0], args[1])
 		default:
 			return fmt.Errorf("too many arguments: expected 0-2, got %d", len(args))
 		}
@@ -42,7 +49,7 @@ from the connected database server.`,
 }
 
 // listApps retrieves and displays all apps (folders) in the Infisical project
-func listApps(cmd *cobra.Command, infisicalClient infisical.InfisicalClientInterface, cfg *config.Config) error {
+func listApps(infisicalClient infisical.InfisicalClientInterface, cfg *config.Config) error {
 	fmt.Printf("Fetching apps from Infisical (environment: %s)...\n\n", listEnv)
 
 	folders, err := infisicalClient.Folders().List(infisical.ListFoldersOptions{
@@ -102,7 +109,7 @@ func outputAppsTable(folders []models.Folder) error {
 }
 
 // listSecrets retrieves and displays all secrets for a specific app
-func listSecrets(cmd *cobra.Command, infisicalClient infisical.InfisicalClientInterface, cfg *config.Config, appName string) error {
+func listSecrets(infisicalClient infisical.InfisicalClientInterface, cfg *config.Config, appName string) error {
 	secretPath := fmt.Sprintf("/%s", appName)
 
 	fmt.Printf("Fetching secrets for app %q (environment: %s)...\n\n", appName, listEnv)
@@ -133,7 +140,8 @@ func listSecrets(cmd *cobra.Command, infisicalClient infisical.InfisicalClientIn
 	return outputSecretsTable(secrets)
 }
 
-func getSecret(cmd *cobra.Command, infisicalClient infisical.InfisicalClientInterface, cfg *config.Config, appName, secretKey string) error {
+// getSecret retrieves and displays a secret for a specific app for a key
+func getSecret(infisicalClient infisical.InfisicalClientInterface, cfg *config.Config, appName, secretKey string) error {
 	secretPath := fmt.Sprintf("/%s", appName)
 
 	fmt.Printf("Fetching secret %q from app %q (environment: %s)...\n\n", secretKey, appName, listEnv)
