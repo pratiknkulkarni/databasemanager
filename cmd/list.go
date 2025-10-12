@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/infisical/go-sdk/packages/models"
 	"github.com/jedib0t/go-pretty/v6/table"
 
 	infisical "github.com/infisical/go-sdk"
@@ -71,10 +72,41 @@ func listApps(cmd *cobra.Command, infClient infisical.InfisicalClientInterface, 
 	}
 
 	if len(folders) == 0 {
-		fmt.Printf("No apps found in environment %q\n", listEnv)
+		if listFormat == "json" {
+			fmt.Println("[]")
+		} else {
+			fmt.Printf("No apps found in environment %q\n", listEnv)
+		}
 		return nil
 	}
 
+	if listFormat == "json" {
+		return outputAppsJSON(folders)
+	}
+
+	return outputAppsTable(folders)
+}
+
+// outputAppsJSON renders apps in JSON format
+func outputAppsJSON(folders []models.Folder) error {
+	data := make([]map[string]string, 0, len(folders))
+	for _, folder := range folders {
+		data = append(data, map[string]string{
+			"app_name": folder.Name,
+		})
+	}
+
+	jsonData, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal apps to JSON: %w", err)
+	}
+
+	fmt.Println(string(jsonData))
+	return nil
+}
+
+// outputAppsTable renders apps in table format
+func outputAppsTable(folders []models.Folder) error {
 	t := table.NewWriter()
 	t.AppendHeader(table.Row{"App Name"})
 
