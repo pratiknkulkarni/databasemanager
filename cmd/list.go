@@ -14,59 +14,38 @@ import (
 )
 
 var (
-	listApp       string
 	listFormat    string
-	listType      string
 	listEnv       string
 	listShowValue bool
-	listSecretKey string
-)
-
-const (
-	typeApps    = "apps"
-	typeSecrets = "secrets"
-	typeSecret  = "secret"
 )
 
 var listCmd = &cobra.Command{
-	Use:   "list",
+	Use:   "list [APP] [SECRET_KEY]",
 	Short: "list will list all the secrets stored in Infisical",
 	Long: `List all secrets from Infisical and optionally list all databases 
 from the connected database server.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if listType == "" {
-			return fmt.Errorf("--type is required (options: apps, secrets, secret)")
-		}
-
-		if !isValidType(listType) {
-			return fmt.Errorf("invalid type %q, must be one of: %s", listType, strings.Join([]string{typeApps, typeSecrets}, ", "))
-		}
-
-		if listType == typeSecrets && listApp == "" {
-			return fmt.Errorf("--app is required when --type is secrets")
-		}
-
 		infisicalClient := GetInfisicalClient(cmd)
 		cfg := GetConfig(cmd)
-
-		switch listType {
-		case typeApps:
+		switch len(args) {
+		case 0:
 			return listApps(cmd, infisicalClient, cfg)
-		case typeSecrets:
-			return listSecrets(cmd, infisicalClient, cfg)
-		case typeSecret:
-			return listSecret(cmd, infisicalClient, cfg)
+		case 1:
+			//listApp = args[0]
+			return listSecrets(cmd, infisicalClient, cfg, args[0])
+		case 2:
+			return getSecret(cmd, infisicalClient, cfg, args[0], args[1])
 		default:
-			return fmt.Errorf("unknown type: %s", listType)
+			return fmt.Errorf("too many arguments: expected 0-2, got %d", len(args))
 		}
 	},
 }
 
 // listApps retrieves and displays all apps (folders) in the Infisical project
-func listApps(cmd *cobra.Command, infClient infisical.InfisicalClientInterface, cfg *config.Config) error {
+func listApps(cmd *cobra.Command, infisicalClient infisical.InfisicalClientInterface, cfg *config.Config) error {
 	fmt.Printf("Fetching apps from Infisical (environment: %s)...\n\n", listEnv)
 
-	folders, err := infClient.Folders().List(infisical.ListFoldersOptions{
+	folders, err := infisicalClient.Folders().List(infisical.ListFoldersOptions{
 		ProjectID:   cfg.InfisicalProjectId,
 		Environment: listEnv,
 	})
@@ -123,26 +102,26 @@ func outputAppsTable(folders []models.Folder) error {
 }
 
 // listSecrets retrieves and displays all secrets for a specific app
-func listSecrets(cmd *cobra.Command, infClient infisical.InfisicalClientInterface, cfg *config.Config) error {
-	secretPath := fmt.Sprintf("/%s", listApp)
+func listSecrets(cmd *cobra.Command, infisicalClient infisical.InfisicalClientInterface, cfg *config.Config, appName string) error {
+	secretPath := fmt.Sprintf("/%s", appName)
 
-	fmt.Printf("Fetching secrets for app %q (environment: %s)...\n\n", listApp, listEnv)
+	fmt.Printf("Fetching secrets for app %q (environment: %s)...\n\n", appName, listEnv)
 
-	secrets, err := infClient.Secrets().List(infisical.ListSecretsOptions{
+	secrets, err := infisicalClient.Secrets().List(infisical.ListSecretsOptions{
 		Environment: listEnv,
 		ProjectID:   cfg.InfisicalProjectId,
 		SecretPath:  secretPath,
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to list secrets for app %q: %w", listApp, err)
+		return fmt.Errorf("failed to list secrets for app %q: %w", appName, err)
 	}
 
 	if len(secrets) == 0 {
 		if listFormat == "json" {
 			fmt.Println("[]")
 		} else {
-			fmt.Printf("No secrets found for app %q in environment %q\n", listApp, listEnv)
+			fmt.Printf("No secrets found for app %q in environment %q\n", appName, listEnv)
 		}
 		return nil
 	}
@@ -154,10 +133,10 @@ func listSecrets(cmd *cobra.Command, infClient infisical.InfisicalClientInterfac
 	return outputSecretsTable(secrets)
 }
 
-func listSecret(cmd *cobra.Command, infisicalClient infisical.InfisicalClientInterface, cfg *config.Config) error {
-	secretPath := fmt.Sprintf("/%s", listApp)
+func getSecret(cmd *cobra.Command, infisicalClient infisical.InfisicalClientInterface, cfg *config.Config, appName, secretKey string) error {
+	secretPath := fmt.Sprintf("/%s", appName)
 
-	fmt.Printf("Fetching secret %q from app %q (environment: %s)...\n\n", listSecretKey, listApp, listEnv)
+	fmt.Printf("Fetching secret %q from app %q (environment: %s)...\n\n", secretKey, appName, listEnv)
 
 	secrets, err := infisicalClient.Secrets().List(infisical.ListSecretsOptions{
 		Environment: listEnv,
@@ -166,20 +145,20 @@ func listSecret(cmd *cobra.Command, infisicalClient infisical.InfisicalClientInt
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to list secrets for app %q: %w", listApp, err)
+		return fmt.Errorf("failed to list secrets for app %q: %w", appName, err)
 	}
 
 	// Find the specific secret
 	var foundSecret *models.Secret
 	for i := range secrets {
-		if secrets[i].SecretKey == listSecretKey {
+		if secrets[i].SecretKey == secretKey {
 			foundSecret = &secrets[i]
 			break
 		}
 	}
 
 	if foundSecret == nil {
-		return fmt.Errorf("secret %q not found in app %q", listSecretKey, listApp)
+		return fmt.Errorf("failed to find secret %q in app %q", secretKey, appName)
 	}
 
 	if listFormat == "json" {
@@ -206,19 +185,8 @@ func maskSecretValue(key, value string) string {
 	return value
 }
 
-// isValidType checks if the provided type is valid
-func isValidType(t string) bool {
-	validTypes := []string{typeApps, typeSecrets, typeSecret}
-	for _, valid := range validTypes {
-		if t == valid {
-			return true
-		}
-	}
-	return false
-}
-
 // outputSecretsTable renders secrets in table format
-func outputSecretsTable(secrets []infisical.Secret) error {
+func outputSecretsTable(secrets []models.Secret) error {
 	t := table.NewWriter()
 	t.AppendHeader(table.Row{"Secret Key", "Secret Value"})
 
@@ -235,7 +203,7 @@ func outputSecretsTable(secrets []infisical.Secret) error {
 }
 
 // outputSecretsJSON displays secrets in JSON format
-func outputSecretsJSON(secrets []infisical.Secret) error {
+func outputSecretsJSON(secrets []models.Secret) error {
 	data := make([]map[string]string, 0, len(secrets))
 	for _, secret := range secrets {
 		value := secret.SecretValue
@@ -258,7 +226,7 @@ func outputSecretsJSON(secrets []infisical.Secret) error {
 }
 
 // outputSecretTable renders a single secret in table format
-func outputSecretTable(secret *infisical.Secret) error {
+func outputSecretTable(secret *models.Secret) error {
 	t := table.NewWriter()
 	t.AppendHeader(table.Row{"Secret Key", "Secret Value"})
 
@@ -273,7 +241,7 @@ func outputSecretTable(secret *infisical.Secret) error {
 }
 
 // outputSecretJSON renders a single secret in JSON format
-func outputSecretJSON(secret *infisical.Secret) error {
+func outputSecretJSON(secret *models.Secret) error {
 	value := secret.SecretValue
 	if !listShowValue {
 		value = maskSecretValue(secret.SecretKey, secret.SecretValue)
@@ -296,10 +264,7 @@ func outputSecretJSON(secret *infisical.Secret) error {
 func init() {
 	rootCmd.AddCommand(listCmd)
 
-	listCmd.Flags().StringVar(&listType, "type", "", "Type to list: apps, secrets, secret (required)")
-	listCmd.Flags().StringVar(&listApp, "app", "", "Application name (required when --type is secrets)")
 	listCmd.Flags().StringVar(&listEnv, "env", "dev", "Infisical environment")
 	listCmd.Flags().BoolVar(&listShowValue, "show-values", false, "Show actual secret values (default: masked for sensitive data)")
 	listCmd.Flags().StringVar(&listFormat, "format", "table", "Output format: table, json")
-	listCmd.Flags().StringVar(&listSecretKey, "key", "", "Secret key name (required when --type is secret)")
 }
