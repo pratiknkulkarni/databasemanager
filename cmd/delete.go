@@ -17,22 +17,26 @@ var (
 
 // deleteCmd represents the delete command
 var deleteCmd = &cobra.Command{
-	Use:   "delete",
-	Short: "A brief description of your command",
-	Long: `A longer description that spans multiple lines and likely contains examples
-and usage of using your command. For example:
+	Use:   "delete <app>",
+	Short: "Delete app database and Infisical secrets",
+	Long: `Delete an app's database, database user, and remove its secrets from Infisical.
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+Without --force, you'll be prompted to confirm deletion of each resource.
+With --force, all resources are deleted after a single confirmation.
+
+The deletion process:
+1. Terminates all active database connections
+2. Drops the database
+3. Drops the database user
+4. Deletes the Infisical folder containing secrets
+
+Examples:
+  databasemanager delete myapp
+  databasemanager delete myapp --env prod
+  databasemanager delete myapp --force
+  databasemanager delete myapp --env prod --force`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		//if deleteForce {
-		//	fmt.Println("delete force")
-		//} else {
-		//	fmt.Println("no delete force")
-		//}
-
 		appName := args[0]
 
 		infisicalClient := GetInfisicalClient(cmd)
@@ -66,6 +70,7 @@ to quickly create a Cobra application.`,
 		if dbName == "" || dbUser == "" {
 			return fmt.Errorf("incomplete secrets for app %q: missing DB_NAME or DB_USER. Unable to delete database without it", appName)
 		}
+
 		if !deleteForce {
 			getDeleteConfirmation(appName, dbName, dbUser, deleteEnv)
 		}
@@ -86,7 +91,6 @@ to quickly create a Cobra application.`,
 		if err != nil {
 			return fmt.Errorf("failed to delete app from Infisical: %w", err)
 		} else {
-			fmt.Println("delete done")
 			return nil
 		}
 	},
@@ -112,6 +116,6 @@ func getDeleteConfirmation(appName, dbName, dbUser, env string) bool {
 func init() {
 	rootCmd.AddCommand(deleteCmd)
 
-	deleteCmd.Flags().StringVar(&deleteEnv, "env", "dev", "Infisical environment to write secrets into")
-	deleteCmd.Flags().BoolVar(&deleteForce, "force", false, "Force delete without user confirmation.")
+	deleteCmd.Flags().StringVarP(&deleteEnv, "env", "e", "dev", "Infisical environment to write secrets into")
+	deleteCmd.Flags().BoolVarP(&deleteForce, "force", "f", false, "Force delete without user confirmation.")
 }
