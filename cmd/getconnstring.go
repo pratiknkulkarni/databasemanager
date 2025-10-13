@@ -12,18 +12,18 @@ var (
 	getConnFormat string
 )
 
-var getConnectionStringCmd = &cobra.Command{
-	Use:   "get-connection-string <app>",
+var getconnstringCmd = &cobra.Command{
+	Use:   "getconnstring <app>",
 	Short: "Get database connection string for an app",
 	Long: `Generate connection strings for an app's database in various formats.
 Supports URI, psql command, and env file formats (for now).
 
 Examples:
-  databasemanager get-connection-string myapp
-  databasemanager get-connection-string myapp --env prod
-  databasemanager get-connection-string myapp --format uri
-  databasemanager get-connection-string myapp --format psql
-  databasemanager get-connection-string myapp --format env`,
+  databasemanager getconnstring myapp
+  databasemanager getconnstring myapp --env prod
+  databasemanager getconnstring myapp --format uri
+  databasemanager getconnstring myapp --format psql
+  databasemanager getconnstring myapp --format env`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		appName := args[0]
@@ -91,7 +91,7 @@ func generateConnectionString(secrets map[string]string, format string) (string,
 }
 
 func init() {
-	rootCmd.AddCommand(getConnectionStringCmd)
-	getConnectionStringCmd.Flags().StringVar(&getConnEnv, "env", "dev", "Infisical environment")
-	getConnectionStringCmd.Flags().StringVar(&getConnFormat, "format", "uri", "Output format: uri, psql, env")
+	rootCmd.AddCommand(getconnstringCmd)
+	getconnstringCmd.Flags().StringVar(&getConnEnv, "env", "dev", "Infisical environment")
+	getconnstringCmd.Flags().StringVar(&getConnFormat, "format", "uri", "Output format: uri, psql, env")
 }
