@@ -18,7 +18,6 @@ import (
 )
 
 var (
-	appName      string
 	appPassword  string
 	dbName       string
 	userName     string
@@ -32,9 +31,10 @@ var provisionCmd = &cobra.Command{
 	Short: "Provision a new isolated application database",
 	Long:  `Provision a new database, roles, and schema for an application.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if appName == "" {
-			return fmt.Errorf("--app are required")
+		if len(args) != 1 {
+			return fmt.Errorf("arguments mismatch: expected 1 argument")
 		}
+		appName := args[0]
 
 		client := GetDatabaseClient(cmd)
 
@@ -43,11 +43,11 @@ var provisionCmd = &cobra.Command{
 
 		if appPassword == "" {
 			appPassword = generateRandomPassword(16)
-			log.Printf("Generated random password for app=%s", appName)
+			log.Printf("Generated random password for app: %s", appName)
 		}
 
 		provisionOptions := database.ProvisionOptions{
-			AppName:     appName,
+			AppName:     args[0],
 			AppPassword: appPassword,
 			Database:    dbName,
 			User:        userName,
@@ -119,7 +119,7 @@ var provisionCmd = &cobra.Command{
 
 		printProvisionSummary(os.Stdout, provisionOptions.AppName, provisionOptions.Database, provisionOptions.User, provisionOptions.Schema, provisionOptions.AppPassword, hidePassword)
 
-		log.Printf("Provisioned database for app=%s", appName)
+		log.Printf("Provisioned database for app: %s", appName)
 		return nil
 	},
 }
@@ -127,7 +127,7 @@ var provisionCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(provisionCmd)
 
-	provisionCmd.Flags().StringVar(&appName, "app", "", "Application name (required)")
+	//provisionCmd.Flags().StringVar(&appName, "app", "", "Application name (required)")
 	provisionCmd.Flags().StringVar(&appPassword, "password", "", "Application database password (optional, random if empty)")
 	provisionCmd.Flags().StringVar(&dbName, "dbname", "", "Override default generated database name (optional)")
 	provisionCmd.Flags().StringVar(&userName, "user", "", "Override default generated database user (optional)")
@@ -135,7 +135,7 @@ func init() {
 	provisionCmd.Flags().BoolVar(&hidePassword, "hide-password", false, "Hide password in the summary output")
 	provisionCmd.Flags().StringVar(&environment, "env", "dev", "Infisical environment to write secrets into")
 
-	_ = provisionCmd.MarkFlagRequired("app")
+	//_ = provisionCmd.MarkFlagRequired("app")
 }
 
 func printProvisionSummary(w io.Writer, app, db, user, schema, password string, hide bool) {
@@ -155,6 +155,7 @@ func printProvisionSummary(w io.Writer, app, db, user, schema, password string, 
 	_ = tw.Flush()
 }
 
+// TODO: handle this better, maybe a bit stronger password?
 func generateRandomPassword(n int) string {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
