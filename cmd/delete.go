@@ -3,7 +3,6 @@ package cmd
 import (
 	"bufio"
 	"fmt"
-	"os"
 	"strings"
 
 	infisical "github.com/infisical/go-sdk"
@@ -72,7 +71,7 @@ Examples:
 		}
 
 		if !deleteForce {
-			getDeleteConfirmation(appName, dbName, dbUser, deleteEnv)
+			getDeleteConfirmation(cmd, appName, dbName, dbUser, deleteEnv)
 		}
 
 		err = databaseClient.Delete(cmd.Context(), dbName, dbUser)
@@ -97,19 +96,25 @@ Examples:
 }
 
 // getDeleteConfirmation prompts user to confirm deletion
-func getDeleteConfirmation(appName, dbName, dbUser, env string) bool {
-	fmt.Printf("You are about to delete app: %s\n", appName)
-	fmt.Printf("Environment: %s\n\n", env)
-	fmt.Printf("This will delete:\n")
-	fmt.Printf(" - App from Infisical: /%s\n\n", appName)
-	fmt.Printf("  - Database: %s\n", dbName)
-	fmt.Printf("  - Database user: %s\n", dbUser)
-	fmt.Print("Type 'y' to confirm deletion: ")
+func getDeleteConfirmation(cmd *cobra.Command, appName, dbName, dbUser, env string) bool {
+	out := cmd.ErrOrStderr()
+	in := cmd.InOrStdin()
 
-	reader := bufio.NewReader(os.Stdin)
-	input, _ := reader.ReadString('\n')
+	fmt.Fprintln(out, "You are about to delete app:", appName)
+	fmt.Fprintf(out, "Environment: %s\n\n", env)
+	fmt.Fprintln(out, "This will delete:")
+	fmt.Fprintf(out, " - App from Infisical: /%s\n\n", appName)
+	fmt.Fprintf(out, "  - Database: %s\n", dbName)
+	fmt.Fprintf(out, "  - Database user: %s\n", dbUser)
+	fmt.Fprint(out, "Type 'y' to confirm deletion: ")
+
+	reader := bufio.NewReader(in)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		fmt.Fprintln(cmd.ErrOrStderr(), "\nfailed to read confirmation: ", err)
+	}
+
 	input = strings.TrimSpace(strings.ToLower(input))
-
 	return input == "y"
 }
 
