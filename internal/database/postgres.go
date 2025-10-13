@@ -524,3 +524,60 @@ func (p *PostgresClient) reassignOwnedObjects(ctx context.Context, databaseName,
 
 	return nil
 }
+
+// TestAppConnection tests a database connection using app credentials from Infisical
+func (p *PostgresClient) TestAppConnection(ctx context.Context, credentials map[string]string) error {
+	host := credentials["DB_HOST"]
+	port := credentials["DB_PORT"]
+	dbName := credentials["DB_NAME"]
+	user := credentials["DB_USER"]
+	password := credentials["DB_PASSWORD"]
+
+	// check ALL secrets before testing
+	missingFields := []string{}
+	if host == "" {
+		missingFields = append(missingFields, "DB_HOST")
+	}
+	if port == "" {
+		missingFields = append(missingFields, "DB_PORT")
+	}
+	if dbName == "" {
+		missingFields = append(missingFields, "DB_NAME")
+	}
+	if user == "" {
+		missingFields = append(missingFields, "DB_USER")
+	}
+	if password == "" {
+		missingFields = append(missingFields, "DB_PASSWORD")
+	}
+
+	if len(missingFields) > 0 {
+		return fmt.Errorf("missing required credentials: %v", missingFields)
+	}
+
+	appDSN := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
+		host, port, user, password, dbName)
+
+	appDB, err := sql.Open("postgres", appDSN)
+	if err != nil {
+		return fmt.Errorf("failed to create connection: %w", err)
+	}
+	defer appDB.Close()
+
+	ctxTimeout, cancel := context.WithTimeout(ctx, DefaultPingTimeout)
+	defer cancel()
+
+	if err := appDB.PingContext(ctxTimeout); err != nil {
+		return fmt.Errorf("failed to connect to database %q as user %q: %w", dbName, user, err)
+	}
+
+	queryCtx, cancel := context.WithTimeout(ctx, DefaultPingTimeout)
+	defer cancel()
+
+	var dbVersion string
+	if err := appDB.QueryRowContext(queryCtx, "SELECT version()").Scan(&dbVersion); err != nil {
+		return fmt.Errorf("connected but failed to query database: %w", err)
+	}
+
+	return nil
+}

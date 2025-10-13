@@ -19,4 +19,5 @@ type Database interface {
 	Test(ctx context.Context) error
 	Provision(ctx context.Context, provisionOptions ProvisionOptions) error
 	Delete(ctx context.Context, databaseName, userName string) error
+	TestAppConnection(ctx context.Context, credentials map[string]string) error
 }
