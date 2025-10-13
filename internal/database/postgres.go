@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"io"
+	"log/slog"
 	"regexp"
 	"strings"
 	"sync"
@@ -149,6 +149,8 @@ func (p *PostgresClient) Provision(ctx context.Context, opts ProvisionOptions) (
 		return fmt.Errorf("open new database %q: %w", databaseName, err)
 	}
 
+	defer appDB.Close()
+
 	if err = p.createDatabase(ctx, appDB, databaseName); err != nil {
 		return err
 	}
@@ -227,20 +229,14 @@ func (p *PostgresClient) isolatePublicSchema(ctx context.Context, appDB *sql.DB,
 }
 
 // configureNewDatabase connects to the newly created database and sets up schema
-func (p *PostgresClient) configureNewDatabase(ctx context.Context, appDB *sql.DB, dbName, userName, schemaName string) error {
+func (p *PostgresClient) configureNewDatabase(ctx context.Context, appDB *sql.DB, databaseName, userName, schemaName string) error {
 	var err error
-	// appDSN := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-	// 	p.cfg.DatabaseHostname,
-	// 	p.cfg.DatabasePort,
-	// 	p.cfg.DatabaseUser,
-	// 	p.cfg.DatabasePassword,
-	// 	dbName)
 
 	ctxTimeout, cancel := context.WithTimeout(ctx, DefaultOperationTimeout)
 	defer cancel()
 
 	if err = appDB.PingContext(ctxTimeout); err != nil {
-		return fmt.Errorf("failed to ping new database %q: %w", dbName, err)
+		return fmt.Errorf("failed to ping new database %q: %w", databaseName, err)
 	}
 
 	quotedUser := pq.QuoteIdentifier(userName)
@@ -254,7 +250,7 @@ func (p *PostgresClient) configureNewDatabase(ctx context.Context, appDB *sql.DB
 		return err
 	}
 
-	if err = p.revokePublicConnect(ctx, dbName); err != nil {
+	if err = p.revokePublicConnect(ctx, databaseName); err != nil {
 		return err
 	}
 
@@ -293,22 +289,20 @@ func (p *PostgresClient) setSearchPath(ctx context.Context, userName, schemaName
 
 // rollbackProvision attempts to clean up resources created during a failed provision
 func (p *PostgresClient) rollbackProvision(ctx context.Context, dbName, userName string, state *provisionState) {
-	// Use background context for cleanup to avoid cancelled context issues
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	if state.databaseCreated {
 		dropDBSQL := fmt.Sprintf("DROP DATABASE IF EXISTS %s", pq.QuoteIdentifier(dbName))
 		if _, err := p.db.ExecContext(cleanupCtx, dropDBSQL); err != nil {
-			// Log error but continue cleanup
-			fmt.Fprintf(io.Discard, "rollback: failed to drop database %q: %v\n", dbName, err)
+			slog.Warn("rollback: failed to drop database", "db", dbName, "error", err)
 		}
 	}
 
 	if state.roleCreated {
 		dropRoleSQL := fmt.Sprintf("DROP ROLE IF EXISTS %s", pq.QuoteIdentifier(userName))
 		if _, err := p.db.ExecContext(cleanupCtx, dropRoleSQL); err != nil {
-			fmt.Fprintf(io.Discard, "rollback: failed to drop role %q: %v\n", userName, err)
+			slog.Warn("rollback: failed to drop role", "role", userName, "error", err)
 		}
 	}
 }

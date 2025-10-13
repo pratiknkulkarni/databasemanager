@@ -53,6 +53,7 @@ Examples:
 		requiredKeys := []string{"DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD", "DB_SCHEMA"}
 		for _, key := range requiredKeys {
 			if _, exists := secretMap[key]; !exists {
+				// fairly certain this would never reach considering the provision stage, but still
 				return fmt.Errorf("required secret %q not found", key)
 			}
 		}
@@ -67,6 +68,9 @@ Examples:
 	},
 }
 
+// generateConnectionString generates the connection string based on the secrets stored in Infisical.
+// Returns the connection string based on the flags user selects.
+// Default format - URI
 func generateConnectionString(secrets map[string]string, format string) (string, error) {
 	host := secrets["DB_HOST"]
 	port := secrets["DB_PORT"]
