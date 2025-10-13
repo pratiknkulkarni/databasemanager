@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -230,6 +231,10 @@ func (p *PostgresClient) isolatePublicSchema(ctx context.Context, appDB *sql.DB,
 
 // configureNewDatabase connects to the newly created database and sets up schema
 func (p *PostgresClient) configureNewDatabase(ctx context.Context, appDB *sql.DB, databaseName, userName, schemaName string) error {
+	if appDB == nil {
+		return fmt.Errorf("appDB is nil")
+	}
+
 	var err error
 
 	ctxTimeout, cancel := context.WithTimeout(ctx, DefaultOperationTimeout)
@@ -359,5 +364,163 @@ func (p *PostgresClient) ensureConnection(ctx context.Context) error {
 	}
 
 	p.db = db
+	return nil
+}
+
+func (p *PostgresClient) Delete(ctx context.Context, databaseName, userName string) error {
+	userName, err := validate(userName)
+	if err != nil {
+		return fmt.Errorf("invalid username: %w", err)
+	}
+
+	if err := p.ensureConnection(ctx); err != nil {
+		return err
+	}
+
+	ctxTimeout, cancel := context.WithTimeout(ctx, DefaultOperationTimeout)
+	defer cancel()
+
+	// Check if role exists
+	var exists bool
+	query := "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1)"
+	if err := p.db.QueryRowContext(ctxTimeout, query, userName).Scan(&exists); err != nil {
+		return fmt.Errorf("failed to check if role exists: %w", err)
+	}
+
+	if !exists {
+		return fmt.Errorf("role %q does not exist", userName)
+	}
+
+	// Reassign all objects owned by the user to the admin user
+	// This includes schemas, tables, sequences, functions, etc.
+	//adminUser := pq.QuoteIdentifier(p.cfg.DatabaseUser)
+	quotedUser := pq.QuoteIdentifier(userName)
+
+	// Reassign owned objects in all databases
+	// We need to connect to each database and reassign objects there
+	databases, err := p.getAllDatabases(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to get list of databases: %w", err)
+	}
+
+	for _, dbName := range databases {
+		// Skip system databases
+		if dbName == "postgres" || dbName == "template0" || dbName == "template1" {
+			continue
+		}
+
+		// Connect to each database and reassign objects
+		if err := p.reassignOwnedObjects(ctx, dbName, userName, p.cfg.DatabaseUser); err != nil {
+			// Log warning but continue - some databases may be inaccessible
+			fmt.Fprintf(os.Stderr, "warning: failed to reassign objects in database %q: %v\n", dbName, err)
+		}
+	}
+
+	// Terminate all connections for this role before dropping
+	terminateSQL := fmt.Sprintf(
+		"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = %s AND pid <> pg_backend_pid()",
+		pq.QuoteLiteral(userName),
+	)
+	if _, err := p.db.ExecContext(ctxTimeout, terminateSQL); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to terminate connections for role %q: %v\n", userName, err)
+	}
+
+	// Drop the role
+	dropRoleSQL := fmt.Sprintf("DROP ROLE IF EXISTS %s", quotedUser)
+	if _, err := p.db.ExecContext(ctxTimeout, dropRoleSQL); err != nil {
+		return fmt.Errorf("failed to drop role %q: %w", userName, err)
+	}
+
+	databaseName, err = validate(databaseName)
+
+	if err != nil {
+		return fmt.Errorf("invalid database name: %w", err)
+	}
+
+	if err := p.ensureConnection(ctx); err != nil {
+		return err
+	}
+
+	databaseExists, err := p.databaseExists(ctx, databaseName)
+	if err != nil {
+		return fmt.Errorf("failed to check if database exists: %w", err)
+	}
+
+	if !databaseExists {
+		return fmt.Errorf("database %q does not exist", databaseName)
+	}
+
+	if _, err := p.db.ExecContext(ctxTimeout, terminateSQL); err != nil {
+		return fmt.Errorf("failed to terminate connections: %w", err)
+	}
+
+	dropDBSQL := fmt.Sprintf("DROP DATABASE IF EXISTS %s", pq.QuoteIdentifier(databaseName))
+	if _, err := p.db.ExecContext(ctxTimeout, dropDBSQL); err != nil {
+		return fmt.Errorf("failed to drop database %q: %w", databaseName, err)
+	}
+
+	return nil
+}
+
+// getAllDatabases returns a list of all database names
+func (p *PostgresClient) getAllDatabases(ctx context.Context) ([]string, error) {
+	ctxTimeout, cancel := context.WithTimeout(ctx, DefaultOperationTimeout)
+	defer cancel()
+
+	rows, err := p.db.QueryContext(ctxTimeout, "SELECT datname FROM pg_database WHERE datistemplate = false")
+	if err != nil {
+		return nil, fmt.Errorf("failed to query databases: %w", err)
+	}
+	defer rows.Close()
+
+	var databases []string
+	for rows.Next() {
+		var dbName string
+		if err := rows.Scan(&dbName); err != nil {
+			return nil, fmt.Errorf("failed to scan database name: %w", err)
+		}
+		databases = append(databases, dbName)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating databases: %w", err)
+	}
+
+	return databases, nil
+}
+
+// reassignOwnedObjects reassigns all objects owned by a user in a specific database
+func (p *PostgresClient) reassignOwnedObjects(ctx context.Context, databaseName, oldOwner, newOwner string) error {
+	ctxTimeout, cancel := context.WithTimeout(ctx, DefaultOperationTimeout)
+	defer cancel()
+
+	// Build DSN for the specific database
+	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+		p.cfg.DatabaseHostname,
+		p.cfg.DatabasePort,
+		p.cfg.DatabaseUser,
+		p.cfg.DatabasePassword,
+		databaseName)
+
+	db, err := sql.Open("postgres", dsn)
+	if err != nil {
+		return fmt.Errorf("failed to connect to database %q: %w", databaseName, err)
+	}
+	defer db.Close()
+
+	// Verify connection
+	if err := db.PingContext(ctxTimeout); err != nil {
+		return fmt.Errorf("failed to ping database %q: %w", databaseName, err)
+	}
+
+	// REASSIGN OWNED transfers all objects owned by oldOwner to newOwner
+	reassignSQL := fmt.Sprintf("REASSIGN OWNED BY %s TO %s",
+		pq.QuoteIdentifier(oldOwner),
+		pq.QuoteIdentifier(newOwner))
+
+	if _, err := db.ExecContext(ctxTimeout, reassignSQL); err != nil {
+		return fmt.Errorf("failed to reassign owned objects in database %q: %w", databaseName, err)
+	}
+
 	return nil
 }

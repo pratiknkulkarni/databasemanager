@@ -17,6 +17,7 @@ import (
 	"github.com/praaatik/databasemanager/internal/database"
 )
 
+// TODO: update these variable names for PROVISION_ instead. This is causing confusion being in same package.
 var (
 	appPassword  string
 	dbName       string
@@ -35,7 +36,6 @@ var provisionCmd = &cobra.Command{
 			return fmt.Errorf("arguments mismatch: expected 1 argument")
 		}
 		appName := args[0]
-
 		client := GetDatabaseClient(cmd)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -72,7 +72,6 @@ var provisionCmd = &cobra.Command{
 			return fmt.Errorf("failed to provision database: %w", err)
 		}
 
-		//infisicalClient := GetInfisicalClient(cmd)
 		infisicalClient := GetInfisicalClient(cmd)
 		if infisicalClient == nil {
 			log.Printf("no infisical client in the context")
@@ -84,6 +83,7 @@ var provisionCmd = &cobra.Command{
 			}
 
 			// testing for folder creation
+			fmt.Println("folder name -> ", provisionOptions.AppName)
 			_, err := infisicalClient.Folders().Create(infisical.CreateFolderOptions{
 				ProjectID:   cfg.InfisicalProjectId,
 				Name:        provisionOptions.AppName,
@@ -127,15 +127,12 @@ var provisionCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(provisionCmd)
 
-	//provisionCmd.Flags().StringVar(&appName, "app", "", "Application name (required)")
 	provisionCmd.Flags().StringVar(&appPassword, "password", "", "Application database password (optional, random if empty)")
 	provisionCmd.Flags().StringVar(&dbName, "dbname", "", "Override default generated database name (optional)")
 	provisionCmd.Flags().StringVar(&userName, "user", "", "Override default generated database user (optional)")
 	provisionCmd.Flags().StringVar(&schemaName, "schema", "", "Override default generated schema name (optional)")
 	provisionCmd.Flags().BoolVar(&hidePassword, "hide-password", false, "Hide password in the summary output")
 	provisionCmd.Flags().StringVar(&environment, "env", "dev", "Infisical environment to write secrets into")
-
-	//_ = provisionCmd.MarkFlagRequired("app")
 }
 
 func printProvisionSummary(w io.Writer, app, db, user, schema, password string, hide bool) {
