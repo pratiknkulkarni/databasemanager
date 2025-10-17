@@ -80,6 +80,20 @@ Examples:
 			return fmt.Errorf("failed to delete database: %w", err)
 		}
 
+		for _, secret := range secrets {
+			deleteOptions := infisical.DeleteSecretOptions{
+				Environment: deleteEnv,
+				ProjectID:   cfg.InfisicalProjectId,
+				SecretPath:  secretPath,
+				SecretKey:   secret.SecretKey,
+			}
+
+			_, err := infisicalClient.Secrets().Delete(deleteOptions)
+			if err != nil {
+				return fmt.Errorf("failed to delete secret from app: %w", err)
+			}
+		}
+
 		_, err = infisicalClient.Folders().Delete(infisical.DeleteFolderOptions{
 			FolderName:  appName,
 			ProjectID:   cfg.InfisicalProjectId,

@@ -43,7 +43,7 @@ var provisionCmd = &cobra.Command{
 
 		if appPassword == "" {
 			appPassword = generateRandomPassword(16)
-			log.Printf("Generated random password for app: %s", appName)
+			fmt.Printf("Generated random password for app: %s", appName)
 		}
 
 		provisionOptions := database.ProvisionOptions{
@@ -82,8 +82,6 @@ var provisionCmd = &cobra.Command{
 				env = eFlag
 			}
 
-			// testing for folder creation
-			fmt.Println("folder name -> ", provisionOptions.AppName)
 			_, err := infisicalClient.Folders().Create(infisical.CreateFolderOptions{
 				ProjectID:   cfg.InfisicalProjectId,
 				Name:        provisionOptions.AppName,
@@ -95,7 +93,6 @@ var provisionCmd = &cobra.Command{
 			}
 
 			secretPath := fmt.Sprintf("/%s", provisionOptions.AppName)
-			// secretPath := "/g"
 			secrets := []infisical.BatchCreateSecret{
 				{SecretKey: "DB_NAME", SecretValue: provisionOptions.Database},
 				{SecretKey: "DB_USER", SecretValue: provisionOptions.User},
@@ -111,15 +108,16 @@ var provisionCmd = &cobra.Command{
 				ProjectID:   cfg.InfisicalProjectId,
 				Secrets:     secrets,
 			})
+
 			if err != nil {
 				return fmt.Errorf("failed to create secrets in Infisical: %w", err)
 			}
-			log.Printf("secrets for app=%s created in Infisical at path=%s env=%s", provisionOptions.AppName, secretPath, env)
+			fmt.Printf("secrets for app=%s created in Infisical at path=%s env=%s", provisionOptions.AppName, secretPath, env)
 		}
 
 		printProvisionSummary(os.Stdout, provisionOptions.AppName, provisionOptions.Database, provisionOptions.User, provisionOptions.Schema, provisionOptions.AppPassword, hidePassword)
 
-		log.Printf("Provisioned database for app: %s", appName)
+		fmt.Printf("Provisioned database for app: %s\n", appName)
 		return nil
 	},
 }

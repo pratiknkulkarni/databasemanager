@@ -25,12 +25,57 @@ type databaseClientKey struct{}
 var rootCmd = &cobra.Command{
 	Use:   "databasemanager",
 	Short: "a simple databasemanager to provision database and save details in Infisical Secrets Manager",
-	Long: `A longer description that spans multiple lines and likely contains
-examples and usage of using your application. For example:
+	//TODO: I'll have to add even mysql
+	Long: `databasemanager is a CLI tool for provisioning isolated PostgreSQL databases 
+and securely managing their credentials in Infisical Secrets Manager.
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+Each provisioned application gets:
+  - A dedicated PostgreSQL database
+  - An isolated database user with restricted permissions
+  - A private schema with configured search path
+  - All credentials securely stored in Infisical
+
+Common Operations:
+  - Provision: Create a new isolated database with automatic secret storage
+  - List: View all provisioned apps or secrets for a specific app
+  - Delete: Remove databases, users, and secrets completely
+  - Test: Verify database and Infisical connectivity
+  - Get Connection String: Generate connection strings in various formats (uri, psql)
+
+Examples:
+  # Provision a new app database
+  databasemanager provision myapp
+
+  # List all provisioned apps
+  databasemanager list
+
+  # List secrets for a specific app
+  databasemanager list myapp
+
+  # Get connection string
+  databasemanager getconnstring myapp
+  
+  # Delete an app (with confirmation)
+  databasemanager delete myapp
+
+  # Test connections
+  databasemanager test --app myapp
+
+Configuration:
+  Configuration can be provided via:
+    - Config file: .databasemanager.yaml (searched in current dir and home dir)
+    - Environment variables (prefixed with DATABASEMANAGER_)
+    - Command-line flags
+
+  Required settings:
+    - database-hostname: PostgreSQL server hostname
+    - database-port: PostgreSQL server port (default: 5432)
+    - database-password: Admin user password
+    - infisical-project-id: Infisical project ID
+    - infisical-client-id: Infisical client ID
+    - infisical-client-secret: Infisical client secret
+    - infisical-site-url: Infisical server URL
+`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		initializeViper()
 		if err := initConfig(); err != nil {
@@ -95,8 +140,9 @@ func init() {
 
 func initInfisicalClient(cfg *config.Config) (infisical.InfisicalClientInterface, error) {
 	client := infisical.NewInfisicalClient(context.Background(), infisical.Config{
-		SiteUrl:          cfg.InfisicalSiteURL,
-		AutoTokenRefresh: true,
+		SiteUrl:              cfg.InfisicalSiteURL,
+		AutoTokenRefresh:     true,
+		CacheExpiryInSeconds: 0,
 	})
 
 	_, err := client.Auth().UniversalAuthLogin(cfg.InfisicalClientId, cfg.InfisicalClientSecret)
