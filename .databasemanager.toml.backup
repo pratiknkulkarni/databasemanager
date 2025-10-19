@@ -1,0 +1,10 @@
+database_hostname = "localhost"
+database_password = "root"
+database_port = 5432
+database_user = "root"
+
+infisical_project_id = "cbc1c3df-629a-49ef-b6a8-6b8092cec035"
+infisical_client_secret = "4c657f372a276ea2bdc7d5e0877f79079234691d351e1f16b4eef73c817d693c"
+infisical_client_id = "9729242f-e8d4-4d0a-8bc6-0813e2c378e8"
+
+infisical_site_url = "http://localhost:3333"

@@ -118,8 +118,8 @@ func getDeleteConfirmation(cmd *cobra.Command, appName, dbName, dbUser, env stri
 	fmt.Fprintf(out, "Environment: %s\n\n", env)
 	fmt.Fprintln(out, "This will delete:")
 	fmt.Fprintf(out, " - App from Infisical: /%s\n\n", appName)
-	fmt.Fprintf(out, "  - Database: %s\n", dbName)
-	fmt.Fprintf(out, "  - Database user: %s\n", dbUser)
+	fmt.Fprintf(out, "  - DatabaseName: %s\n", dbName)
+	fmt.Fprintf(out, "  - DatabaseName user: %s\n", dbUser)
 	fmt.Fprint(out, "Type 'y' to confirm deletion: ")
 
 	reader := bufio.NewReader(in)

@@ -3,11 +3,12 @@ package database
 import "context"
 
 type ProvisionOptions struct {
-	AppName     string
-	AppPassword string
-	Database    string
-	User        string
-	Schema      string
+	AppName          string
+	DatabasePassword string
+	DatabaseName     string
+	DatabaseUser     string
+	DatabaseHostname string
+	Schema           string
 }
 
 func (po *ProvisionOptions) Validate() error {

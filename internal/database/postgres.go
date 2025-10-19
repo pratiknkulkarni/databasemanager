@@ -51,7 +51,7 @@ func (p *PostgresClient) Connect(ctx context.Context) error {
 	}
 
 	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s sslmode=disable",
-		p.cfg.DatabaseHostname, p.cfg.DatabasePort, p.cfg.DatabaseUser, p.cfg.DatabasePassword)
+		p.cfg.Postgres.DatabaseHostname, p.cfg.Postgres.DatabasePort, p.cfg.Postgres.DatabaseUser, p.cfg.Postgres.DatabasePassword)
 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
@@ -89,12 +89,12 @@ func (p *PostgresClient) Provision(ctx context.Context, opts ProvisionOptions) (
 		return fmt.Errorf("invalid provision options: %w", err)
 	}
 
-	databaseName := opts.Database
+	databaseName := opts.DatabaseName
 	if databaseName == "" {
 		databaseName = fmt.Sprintf("%s_db", opts.AppName)
 	}
 
-	databaseUserName := opts.User
+	databaseUserName := opts.DatabaseUser
 	if databaseUserName == "" {
 		databaseUserName = fmt.Sprintf("%s_user", opts.AppName)
 	}
@@ -139,10 +139,10 @@ func (p *PostgresClient) Provision(ctx context.Context, opts ProvisionOptions) (
 	}()
 
 	appDSN := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		p.cfg.DatabaseHostname,
-		p.cfg.DatabasePort,
-		p.cfg.DatabaseUser,
-		p.cfg.DatabasePassword,
+		p.cfg.Postgres.DatabaseHostname,
+		p.cfg.Postgres.DatabasePort,
+		p.cfg.Postgres.DatabaseUser,
+		p.cfg.Postgres.DatabasePassword,
 		databaseName)
 
 	appDB, err := sql.Open("postgres", appDSN)
@@ -157,7 +157,7 @@ func (p *PostgresClient) Provision(ctx context.Context, opts ProvisionOptions) (
 	}
 	state.databaseCreated = true
 
-	if err = p.createRole(ctx, databaseUserName, opts.AppPassword); err != nil {
+	if err = p.createRole(ctx, databaseUserName, opts.DatabasePassword); err != nil {
 		return err
 	}
 	state.roleCreated = true
@@ -215,7 +215,7 @@ func (p *PostgresClient) alterDatabaseOwner(ctx context.Context, dbName, userNam
 
 // isolatePublicSchema restricts access to the public schema
 func (p *PostgresClient) isolatePublicSchema(ctx context.Context, appDB *sql.DB, userName string) error {
-	adminUser := pq.QuoteIdentifier(p.cfg.DatabaseUser)
+	adminUser := pq.QuoteIdentifier(p.cfg.Postgres.DatabaseUser)
 	quotedUser := pq.QuoteIdentifier(userName)
 
 	if _, err := appDB.ExecContext(ctx, fmt.Sprintf("ALTER SCHEMA public OWNER TO %s", adminUser)); err != nil {
@@ -344,10 +344,10 @@ func (p *PostgresClient) ensureConnection(ctx context.Context) error {
 	}
 
 	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s sslmode=disable",
-		p.cfg.DatabaseHostname,
-		p.cfg.DatabasePort,
-		p.cfg.DatabaseUser,
-		p.cfg.DatabasePassword)
+		p.cfg.Postgres.DatabaseHostname,
+		p.cfg.Postgres.DatabasePort,
+		p.cfg.Postgres.DatabaseUser,
+		p.cfg.Postgres.DatabasePassword)
 
 	//TODO: hard coding this for now, check alternatives
 	db, err := sql.Open("postgres", dsn)
@@ -410,7 +410,7 @@ func (p *PostgresClient) Delete(ctx context.Context, databaseName, userName stri
 		}
 
 		// Connect to each database and reassign objects
-		if err := p.reassignOwnedObjects(ctx, dbName, userName, p.cfg.DatabaseUser); err != nil {
+		if err := p.reassignOwnedObjects(ctx, dbName, userName, p.cfg.Postgres.DatabaseUser); err != nil {
 			// Log warning but continue - some databases may be inaccessible
 			fmt.Fprintf(os.Stderr, "warning: failed to reassign objects in database %q: %v\n", dbName, err)
 		}
@@ -496,10 +496,10 @@ func (p *PostgresClient) reassignOwnedObjects(ctx context.Context, databaseName,
 
 	// Build DSN for the specific database
 	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		p.cfg.DatabaseHostname,
-		p.cfg.DatabasePort,
-		p.cfg.DatabaseUser,
-		p.cfg.DatabasePassword,
+		p.cfg.Postgres.DatabaseHostname,
+		p.cfg.Postgres.DatabasePort,
+		p.cfg.Postgres.DatabaseUser,
+		p.cfg.Postgres.DatabasePassword,
 		databaseName)
 
 	db, err := sql.Open("postgres", dsn)

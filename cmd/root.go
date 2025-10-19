@@ -87,7 +87,7 @@ Configuration:
 			return fmt.Errorf("failed to initialize infisical client: %w", err)
 		}
 
-		databaseClient, err := initDatabaseClient(&cfg)
+		databaseClient, err := initDatabaseClient(&cfg, cmd)
 		if err != nil {
 			return fmt.Errorf("failed to initialize database client: %w", err)
 		}
@@ -96,6 +96,7 @@ Configuration:
 		ctx := context.WithValue(cmd.Context(), configKey{}, &cfg)
 		ctx = context.WithValue(ctx, infisicalClientKey{}, infisicalClient)
 		ctx = context.WithValue(ctx, databaseClientKey{}, databaseClient)
+
 		cmd.SetContext(ctx)
 
 		return nil
@@ -119,13 +120,14 @@ func init() {
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default searches for .databasemanager.yaml in home directory and current directory)")
 
-	rootCmd.PersistentFlags().String("database-hostname", "localhost", "Database hostname")
-	rootCmd.PersistentFlags().Int("database-port", 5432, "Database port")
-	rootCmd.PersistentFlags().String("database-password", "", "Database password")
+	rootCmd.PersistentFlags().String("database-hostname", "localhost", "DatabaseName hostname")
+	rootCmd.PersistentFlags().Int("database-port", 5432, "DatabaseName port")
+	rootCmd.PersistentFlags().String("database-password", "", "DatabaseName password")
 	rootCmd.PersistentFlags().String("infisical-project-id", "", "Infisical project ID")
 	rootCmd.PersistentFlags().String("infisical-client-id", "", "Infisical client ID")
 	rootCmd.PersistentFlags().String("infisical-client-secret", "", "Infisical client secret")
 	rootCmd.PersistentFlags().String("infisical-site-url", "", "Infisical site URL")
+	rootCmd.PersistentFlags().String("database", "postgres", "DatabaseName type")
 
 	viper.BindPFlag("database_hostname", rootCmd.PersistentFlags().Lookup("database-hostname"))
 	viper.BindPFlag("database_port", rootCmd.PersistentFlags().Lookup("database-port"))
@@ -153,9 +155,54 @@ func initInfisicalClient(cfg *config.Config) (infisical.InfisicalClientInterface
 	return client, nil
 }
 
-func initDatabaseClient(cfg *config.Config) (database.Database, error) {
-	// init hte client here, authentication and all
+func initDatabaseClient(cfg *config.Config, cmd *cobra.Command) (database.Database, error) {
+	// init the client here, authentication and all
 	// add a switch case here to check type of the database - sqlite/postgres/etc
+	dbType, err := cmd.Flags().GetString("database")
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get database flag: %w", err)
+	}
+
+	// defaulting to postgres
+	// maybe have an option to default?
+	if dbType == "" {
+		dbType = "postgres"
+	}
+
+	//TODO: keep these in a slice and iterate through them. Might add more databases later on
+	if dbType != "postgres" && dbType != "mysql" {
+		return nil, fmt.Errorf("invalid database type %q, must be: postgres, mysql", dbType)
+	}
+
+	var databaseClient database.Database
+	switch dbType {
+	case "postgres":
+		postgresClient, err := database.NewPostgresClient(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create postgres client: %w", err)
+		}
+		databaseClient = postgresClient
+
+	case "mysql":
+		mysqlClient, err := database.NewMySQLClient(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create mysql client: %w", err)
+		}
+		databaseClient = mysqlClient
+
+	default:
+		return nil, fmt.Errorf("unsupported database type: %s", dbType)
+	}
+
+	fmt.Println("the dbType passed in is -> ", dbType)
+	ctx := cmd.Context()
+	err = databaseClient.Connect(ctx)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to %s database: %w", dbType, err)
+	}
+
 	return database.NewPostgresClient(cfg)
 }
 

@@ -59,17 +59,37 @@ func initConfig() error {
 func validateConfig(cfg config.Config) error {
 	var missing []string
 
-	if cfg.DatabaseHostname == "" {
-		missing = append(missing, "database_hostname")
+	//if cfg.AppName == "" {
+	//	missing = append(missing, "database_hostname")
+	//}
+	//
+	//if cfg.DatabasePassword == "" {
+	//	missing = append(missing, "database_password")
+	//}
+	//
+	//if cfg.DatabasePort == 0 {
+	//	missing = append(missing, "database_port")
+	//}
+
+	hasPostgres := cfg.Postgres.DatabaseHostname != "" && cfg.Postgres.DatabasePort != 0
+	hasMySQL := cfg.MySQL.DatabaseHostname != "" && cfg.MySQL.DatabasePort != 0
+
+	if !hasPostgres && !hasMySQL {
+		return fmt.Errorf("at least one database (postgres or mysql) must be configured")
 	}
 
-	if cfg.DatabasePassword == "" {
-		missing = append(missing, "database_password")
+	if hasPostgres {
+		if err := validateDatabaseConfig("postgres", cfg.Postgres); err != nil {
+			return err
+		}
 	}
 
-	if cfg.DatabasePort == 0 {
-		missing = append(missing, "database_port")
+	if hasMySQL {
+		if err := validateDatabaseConfig("mysql", cfg.MySQL); err != nil {
+			return err
+		}
 	}
+
 	if cfg.InfisicalProjectId == "" {
 		missing = append(missing, "infisical_project_id")
 	}
@@ -86,3 +106,30 @@ func validateConfig(cfg config.Config) error {
 
 	return nil
 }
+
+func validateDatabaseConfig(dbType string, dbCfg config.DatabaseConfig) error {
+	var missing []string
+
+	if dbCfg.DatabaseHostname == "" {
+		missing = append(missing, fmt.Sprintf("%s.database_hostname", dbType))
+	}
+	if dbCfg.DatabasePort == 0 {
+		missing = append(missing, fmt.Sprintf("%s.database_port", dbType))
+	}
+	if dbCfg.DatabaseUser == "" {
+		missing = append(missing, fmt.Sprintf("%s.database_user", dbType))
+	}
+	if dbCfg.DatabasePassword == "" {
+		missing = append(missing, fmt.Sprintf("%s.database_password", dbType))
+	}
+
+	if len(missing) > 0 {
+		return fmt.Errorf("incomplete %s configuration, missing: %s", dbType, strings.Join(missing, ", "))
+	}
+
+	return nil
+}
+
+//func GetConfig() *config.Config {
+//	return &cfg
+//}

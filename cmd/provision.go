@@ -19,12 +19,14 @@ import (
 
 // TODO: update these variable names for PROVISION_ instead. This is causing confusion being in same package.
 var (
-	appPassword  string
-	dbName       string
-	userName     string
-	schemaName   string
-	hidePassword bool
-	environment  string
+	provisionDatabasePassword string
+	provisionDatabaseName     string
+	provisionDatabaseHostname string
+	userName                  string
+	schemaName                string
+	hidePassword              bool
+	environment               string
+	dbType                    string
 )
 
 var provisionCmd = &cobra.Command{
@@ -38,28 +40,33 @@ var provisionCmd = &cobra.Command{
 		appName := args[0]
 		client := GetDatabaseClient(cmd)
 
+		if dbType != "postgres" && dbType != "mysql" {
+			return fmt.Errorf("invalid database type %q, must be: postgres, mysql", dbType)
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		if appPassword == "" {
-			appPassword = generateRandomPassword(16)
+		if provisionDatabasePassword == "" {
+			provisionDatabasePassword = generateRandomPassword(16)
 			fmt.Printf("Generated random password for app: %s", appName)
 		}
 
 		provisionOptions := database.ProvisionOptions{
-			AppName:     args[0],
-			AppPassword: appPassword,
-			Database:    dbName,
-			User:        userName,
-			Schema:      schemaName,
+			AppName:          args[0],
+			DatabaseHostname: provisionDatabaseHostname,
+			DatabasePassword: provisionDatabasePassword,
+			DatabaseName:     provisionDatabaseName,
+			DatabaseUser:     userName,
+			Schema:           schemaName,
 		}
 
-		if provisionOptions.Database == "" {
-			provisionOptions.Database = fmt.Sprintf("%s_db", provisionOptions.AppName)
+		if provisionOptions.DatabaseName == "" {
+			provisionOptions.DatabaseName = fmt.Sprintf("%s_db", provisionOptions.AppName)
 		}
 
-		if provisionOptions.User == "" {
-			provisionOptions.User = fmt.Sprintf("%s_user", provisionOptions.AppName)
+		if provisionOptions.DatabaseUser == "" {
+			provisionOptions.DatabaseUser = fmt.Sprintf("%s_user", provisionOptions.AppName)
 		}
 
 		if provisionOptions.Schema == "" {
@@ -93,13 +100,21 @@ var provisionCmd = &cobra.Command{
 			}
 
 			secretPath := fmt.Sprintf("/%s", provisionOptions.AppName)
+
 			secrets := []infisical.BatchCreateSecret{
-				{SecretKey: "DB_NAME", SecretValue: provisionOptions.Database},
-				{SecretKey: "DB_USER", SecretValue: provisionOptions.User},
-				{SecretKey: "DB_PASSWORD", SecretValue: provisionOptions.AppPassword},
-				{SecretKey: "DB_SCHEMA", SecretValue: provisionOptions.Schema},
-				{SecretKey: "DB_HOST", SecretValue: cfg.DatabaseHostname},
-				{SecretKey: "DB_PORT", SecretValue: fmt.Sprintf("%d", cfg.DatabasePort)},
+				{SecretKey: "DB_NAME", SecretValue: provisionOptions.DatabaseName},
+				{SecretKey: "DB_USER", SecretValue: provisionOptions.DatabaseUser},
+				{SecretKey: "DB_PASSWORD", SecretValue: provisionOptions.DatabasePassword},
+				{SecretKey: "DB_HOST", SecretValue: provisionOptions.DatabaseHostname},
+				{SecretKey: "DB_PORT", SecretValue: fmt.Sprintf("%d", cfg.Postgres.DatabasePort)},
+			}
+
+			// no schema for mysql
+			if dbType == "postgres" {
+				secrets = append(secrets, infisical.BatchCreateSecret{
+					SecretKey:   "DB_SCHEMA",
+					SecretValue: provisionOptions.Schema,
+				})
 			}
 
 			_, err = infisicalClient.Secrets().Batch().Create(infisical.BatchCreateSecretsOptions{
@@ -115,7 +130,7 @@ var provisionCmd = &cobra.Command{
 			fmt.Printf("secrets for app=%s created in Infisical at path=%s env=%s", provisionOptions.AppName, secretPath, env)
 		}
 
-		printProvisionSummary(os.Stdout, provisionOptions.AppName, provisionOptions.Database, provisionOptions.User, provisionOptions.Schema, provisionOptions.AppPassword, hidePassword)
+		printProvisionSummary(os.Stdout, provisionOptions.AppName, provisionOptions.DatabaseName, provisionOptions.DatabaseUser, provisionOptions.Schema, provisionOptions.DatabasePassword, hidePassword)
 
 		fmt.Printf("Provisioned database for app: %s\n", appName)
 		return nil
@@ -125,12 +140,15 @@ var provisionCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(provisionCmd)
 
-	provisionCmd.Flags().StringVar(&appPassword, "password", "", "Application database password (optional, random if empty)")
-	provisionCmd.Flags().StringVar(&dbName, "dbname", "", "Override default generated database name (optional)")
+	provisionCmd.Flags().StringVar(&provisionDatabasePassword, "password", "", "Application database password (optional, random if empty)")
+	provisionCmd.Flags().StringVar(&provisionDatabaseName, "dbname", "", "Override default generated database name (optional)")
 	provisionCmd.Flags().StringVar(&userName, "user", "", "Override default generated database user (optional)")
 	provisionCmd.Flags().StringVar(&schemaName, "schema", "", "Override default generated schema name (optional)")
 	provisionCmd.Flags().BoolVar(&hidePassword, "hide-password", false, "Hide password in the summary output")
 	provisionCmd.Flags().StringVar(&environment, "env", "dev", "Infisical environment to write secrets into")
+
+	provisionCmd.Flags().StringVar(&provisionDatabaseHostname, "hostname", "localhost", "DatabaseName hostname")
+	provisionCmd.Flags().StringVarP(&dbType, "database", "d", "postgres", "DatabaseName type: postgres or mysql or any ol' database")
 }
 
 func printProvisionSummary(w io.Writer, app, db, user, schema, password string, hide bool) {
@@ -143,8 +161,9 @@ func printProvisionSummary(w io.Writer, app, db, user, schema, password string, 
 	fmt.Fprintln(tw, "Field\tValue")
 	fmt.Fprintln(tw, "-----\t-----")
 	fmt.Fprintf(tw, "App Name\t%s\n", app)
-	fmt.Fprintf(tw, "Database\t%s\n", db)
-	fmt.Fprintf(tw, "User\t%s\n", user)
+	fmt.Fprintf(tw, "DatabaseName\t%s\n", db)
+	fmt.Fprintf(tw, "DatabaseHostname\t%s\n", provisionDatabaseHostname)
+	fmt.Fprintf(tw, "DatabaseUser\t%s\n", user)
 	fmt.Fprintf(tw, "Schema\t%s\n", schema)
 	fmt.Fprintf(tw, "Password\t%s\n", password)
 	_ = tw.Flush()
