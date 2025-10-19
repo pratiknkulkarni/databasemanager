@@ -34,12 +34,18 @@ func (m *MySQLClient) Connect(ctx context.Context) error {
 		return nil
 	}
 
+	fmt.Println(m.cfg.MySQL)
+
 	// MySQL DSN format: user:password@tcp(host:port)/
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/?parseTime=true&timeout=10s",
+	//dsn := "primary_user:root@tcp(localhost:3306)"
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s",
 		m.cfg.MySQL.DatabaseUser,
 		m.cfg.MySQL.DatabasePassword,
 		m.cfg.MySQL.DatabaseHostname,
-		m.cfg.MySQL.DatabasePort)
+		m.cfg.MySQL.DatabasePort,
+		m.cfg.MySQL.DatabaseName)
+
+	fmt.Println(dsn)
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
@@ -80,6 +86,7 @@ func (m *MySQLClient) Test(ctx context.Context) error {
 }
 
 func (m *MySQLClient) Provision(ctx context.Context, opts ProvisionOptions) (err error) {
+	fmt.Println("we'll provision the mysql")
 	return nil
 }
 
@@ -130,4 +137,8 @@ func (m *MySQLClient) terminateConnections(ctx context.Context, databaseName str
 // TestAppConnection tests a database connection using app credentials
 func (m *MySQLClient) TestAppConnection(ctx context.Context, credentials map[string]string) error {
 	return nil
+}
+
+func (m *MySQLClient) Debug() {
+	fmt.Println(m.cfg)
 }

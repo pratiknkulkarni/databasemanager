@@ -7,6 +7,7 @@ type DatabaseConfig struct {
 	DatabasePort     int    `mapstructure:"database_port"`
 	DatabaseUser     string `mapstructure:"database_user"`
 	DatabasePassword string `mapstructure:"database_password"`
+	DatabaseName     string `mapstructure:"database_name"`
 }
 
 type InfisicalConfig struct {
@@ -17,10 +18,12 @@ type InfisicalConfig struct {
 }
 
 type Config struct {
-	//DatabaseConfig  `mapstructure:",squash"`
-	Postgres        DatabaseConfig `mapstructure:"postgres"`
-	MySQL           DatabaseConfig `mapstructure:"mysql"`
-	InfisicalConfig `mapstructure:",squash"`
+	Postgres              DatabaseConfig `mapstructure:"postgres"`
+	MySQL                 DatabaseConfig `mapstructure:"mysql"`
+	InfisicalProjectId    string         `mapstructure:"infisical_project_id"`
+	InfisicalClientId     string         `mapstructure:"infisical_client_id"`
+	InfisicalClientSecret string         `mapstructure:"infisical_client_secret"`
+	InfisicalSiteURL      string         `mapstructure:"infisical_site_url"`
 }
 
 func (c *Config) GetDatabaseConfig(dbType string) (*DatabaseConfig, error) {

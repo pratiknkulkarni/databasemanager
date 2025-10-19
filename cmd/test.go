@@ -28,7 +28,9 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		infisicalClient := GetInfisicalClient(cmd)
 		cfg := GetConfig(cmd)
-		databaseClient := GetDatabaseClient(cmd)
+
+		//TODO: handle this error instead of ignoring it
+		databaseClient, _ := GetDatabaseClient(cmd)
 
 		fmt.Print("Testing Infisical connection... ")
 		if err := testInfisical(infisicalClient); err != nil {

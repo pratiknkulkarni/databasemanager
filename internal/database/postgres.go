@@ -53,6 +53,8 @@ func (p *PostgresClient) Connect(ctx context.Context) error {
 	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s sslmode=disable",
 		p.cfg.Postgres.DatabaseHostname, p.cfg.Postgres.DatabasePort, p.cfg.Postgres.DatabaseUser, p.cfg.Postgres.DatabasePassword)
 
+	fmt.Println(p.cfg.Postgres)
+
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
 		return fmt.Errorf("failed to open postgres connection: %w", err)
@@ -580,4 +582,7 @@ func (p *PostgresClient) TestAppConnection(ctx context.Context, credentials map[
 	}
 
 	return nil
+}
+func (p *PostgresClient) Debug() {
+	fmt.Println(p.cfg)
 }

@@ -40,7 +40,9 @@ Examples:
 
 		infisicalClient := GetInfisicalClient(cmd)
 		cfg := GetConfig(cmd)
-		databaseClient := GetDatabaseClient(cmd)
+		// TODO: handle this error instead of ignoring it
+		//databaseClient, _ := GetDatabaseClient(cmd)
+		databaseClient, err := initDatabaseClient(cfg, cmd)
 
 		secretPath := fmt.Sprintf("/%s", appName)
 		secrets, err := infisicalClient.Secrets().List(infisical.ListSecretsOptions{

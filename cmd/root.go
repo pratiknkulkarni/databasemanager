@@ -203,7 +203,8 @@ func initDatabaseClient(cfg *config.Config, cmd *cobra.Command) (database.Databa
 		return nil, fmt.Errorf("failed to connect to %s database: %w", dbType, err)
 	}
 
-	return database.NewPostgresClient(cfg)
+	return databaseClient, nil
+	//return database.NewPostgresClient(cfg)
 }
 
 func GetConfig(cmd *cobra.Command) *config.Config {
@@ -219,6 +220,6 @@ func GetInfisicalClient(cmd *cobra.Command) infisical.InfisicalClientInterface {
 	return cmd.Context().Value(infisicalClientKey{}).(infisical.InfisicalClientInterface)
 }
 
-func GetDatabaseClient(cmd *cobra.Command) database.Database {
-	return cmd.Context().Value(databaseClientKey{}).(database.Database)
+func GetDatabaseClient(cmd *cobra.Command) (database.Database, error) {
+	return cmd.Context().Value(databaseClientKey{}).(database.Database), nil
 }

@@ -38,7 +38,16 @@ var provisionCmd = &cobra.Command{
 			return fmt.Errorf("arguments mismatch: expected 1 argument")
 		}
 		appName := args[0]
-		client := GetDatabaseClient(cmd)
+
+		//client, err := GetDatabaseClient(cmd)
+		cfg := GetConfig(cmd)
+		client, err := initDatabaseClient(cfg, cmd)
+
+		if err != nil {
+			return fmt.Errorf("failed to get database client: %w", err)
+		}
+
+		fmt.Println(client)
 
 		if dbType != "postgres" && dbType != "mysql" {
 			return fmt.Errorf("invalid database type %q, must be: postgres, mysql", dbType)

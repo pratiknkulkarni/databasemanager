@@ -122,6 +122,9 @@ func validateDatabaseConfig(dbType string, dbCfg config.DatabaseConfig) error {
 	if dbCfg.DatabasePassword == "" {
 		missing = append(missing, fmt.Sprintf("%s.database_password", dbType))
 	}
+	if dbCfg.DatabaseName == "" {
+		missing = append(missing, fmt.Sprintf("%s.database_name", dbType))
+	}
 
 	if len(missing) > 0 {
 		return fmt.Errorf("incomplete %s configuration, missing: %s", dbType, strings.Join(missing, ", "))
