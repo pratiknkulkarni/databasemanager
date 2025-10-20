@@ -401,7 +401,7 @@ func (m *MySQLClient) terminateConnections(ctx context.Context, databaseName str
 	return nil
 }
 
-// TestAppConnection tests a database connection using app credentials
+// TestAppConnection tests whether the credentials created for the application are working.
 func (m *MySQLClient) TestAppConnection(ctx context.Context, credentials map[string]string) error {
 	host := credentials["DB_HOST"]
 	port := credentials["DB_PORT"]
@@ -432,12 +432,13 @@ func (m *MySQLClient) TestAppConnection(ctx context.Context, credentials map[str
 	}
 
 	// MySQL DSN format: user:password@tcp(host:port)/database
-	appDSN := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s",
-		m.cfg.MySQL.DatabaseUser,
-		m.cfg.MySQL.DatabasePassword,
-		m.cfg.MySQL.DatabaseHostname,
-		m.cfg.MySQL.DatabasePort,
-		m.cfg.MySQL.DatabaseName)
+	appDSN := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s",
+		user,
+		password+" root",
+		host,
+		port,
+		dbName)
+	fmt.Println(appDSN)
 
 	appDB, err := sql.Open("mysql", appDSN)
 	if err != nil {
@@ -461,10 +462,6 @@ func (m *MySQLClient) TestAppConnection(ctx context.Context, credentials map[str
 	}
 
 	return nil
-}
-
-func (m *MySQLClient) Debug() {
-	fmt.Println(m.cfg)
 }
 
 // quoteIdentifier quotes a MySQL identifier (database, table, column names)

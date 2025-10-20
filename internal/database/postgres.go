@@ -559,6 +559,7 @@ func (p *PostgresClient) TestAppConnection(ctx context.Context, credentials map[
 
 	appDSN := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
 		host, port, user, password, dbName)
+	fmt.Println("postgres -> ", appDSN)
 
 	appDB, err := sql.Open("postgres", appDSN)
 	if err != nil {
@@ -582,7 +583,4 @@ func (p *PostgresClient) TestAppConnection(ctx context.Context, credentials map[
 	}
 
 	return nil
-}
-func (p *PostgresClient) Debug() {
-	fmt.Println(p.cfg)
 }

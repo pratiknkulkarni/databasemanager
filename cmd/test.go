@@ -71,6 +71,7 @@ Examples:
 				secretMap[s.SecretKey] = s.SecretValue
 			}
 
+			fmt.Println("secretMap -> ", secretMap)
 			if err := databaseClient.TestAppConnection(cmd.Context(), secretMap); err != nil {
 				fmt.Printf("Failed: %v\n", err)
 				return err
