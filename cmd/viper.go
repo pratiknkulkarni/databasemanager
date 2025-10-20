@@ -35,8 +35,6 @@ func initializeViper() {
 			fmt.Fprintf(os.Stderr, "Error reading config file: %v\n", err)
 			os.Exit(1)
 		}
-	} else {
-		fmt.Println("Using config file:", viper.ConfigFileUsed())
 	}
 
 	viper.AutomaticEnv()

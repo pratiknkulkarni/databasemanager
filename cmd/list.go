@@ -23,7 +23,7 @@ var listCmd = &cobra.Command{
 	Use:   "list [APP] [SECRET_KEY]",
 	Short: "list will list all the secrets stored in Infisical",
 	Long: `List all apps, all secrets in an app, or a specific secret.
-    
+   
 	Examples:
 	  databasemanager list              					# List all apps
 	  databasemanager list myapp        					# List all secrets in myapp

@@ -195,7 +195,6 @@ func initDatabaseClient(cfg *config.Config, cmd *cobra.Command) (database.Databa
 		return nil, fmt.Errorf("unsupported database type: %s", dbType)
 	}
 
-	fmt.Println("the dbType passed in is -> ", dbType)
 	ctx := cmd.Context()
 	err = databaseClient.Connect(ctx)
 

@@ -111,6 +111,7 @@ var provisionCmd = &cobra.Command{
 			secretPath := fmt.Sprintf("/%s", provisionOptions.AppName)
 
 			secrets := []infisical.BatchCreateSecret{
+				{SecretKey: "DB_TYPE", SecretValue: dbType},
 				{SecretKey: "DB_NAME", SecretValue: provisionOptions.DatabaseName},
 				{SecretKey: "DB_USER", SecretValue: provisionOptions.DatabaseUser},
 				{SecretKey: "DB_PASSWORD", SecretValue: provisionOptions.DatabasePassword},

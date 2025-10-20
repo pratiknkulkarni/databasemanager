@@ -3,6 +3,7 @@ module github.com/praaatik/databasemanager
 go 1.25.0
 
 require (
+	github.com/atotto/clipboard v0.1.4
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/infisical/go-sdk v0.5.100
 	github.com/jedib0t/go-pretty/v6 v6.6.8
