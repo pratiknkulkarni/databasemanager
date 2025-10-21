@@ -5,11 +5,19 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/charmbracelet/log"
 	infisical "github.com/infisical/go-sdk"
 	"github.com/praaatik/databasemanager/internal/config"
 	"github.com/praaatik/databasemanager/internal/database"
+	"github.com/praaatik/databasemanager/internal/logger"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
+)
+
+var (
+	verbosity int
+	logFile   string
+	logr      *log.Logger
 )
 
 // configKey is used to store the configuration in the context
@@ -21,18 +29,20 @@ type infisicalClientKey struct{}
 // databaseClientKey is used to pass the infisical client as a context
 type databaseClientKey struct{}
 
+type loggerKey struct{}
+
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "databasemanager",
 	Short: "a simple databasemanager to provision database and save details in Infisical Secrets Manager",
 	//TODO: I'll have to add even mysql
-	Long: `databasemanager is a CLI tool for provisioning isolated PostgreSQL databases 
+	Long: `databasemanager is a CLI tool for provisioning isolated PostgreSQL and MySQL databases 
 and securely managing their credentials in Infisical Secrets Manager.
 
 Each provisioned application gets:
-  - A dedicated PostgreSQL database
+  - A dedicated PostgreSQL/MySQL database
   - An isolated database user with restricted permissions
-  - A private schema with configured search path
+  - A private schema with configured search path (for PostgreSQL)
   - All credentials securely stored in Infisical
 
 Common Operations:
@@ -40,7 +50,7 @@ Common Operations:
   - List: View all provisioned apps or secrets for a specific app
   - Delete: Remove databases, users, and secrets completely
   - Test: Verify database and Infisical connectivity
-  - Get Connection String: Generate connection strings in various formats (uri, psql)
+  - Get Connection String: Generate connection strings in various formats (uri, psql, mysql, env)
 
 Examples:
   # Provision a new app database
@@ -53,9 +63,9 @@ Examples:
   databasemanager list myapp
 
   # Get connection string
-  databasemanager getconnstring myapp
+  databasemanager conn myapp
   
-  # Delete an app (with confirmation)
+  # Delete an app
   databasemanager delete myapp
 
   # Test connections
@@ -63,20 +73,38 @@ Examples:
 
 Configuration:
   Configuration can be provided via:
-    - Config file: .databasemanager.yaml (searched in current dir and home dir)
+    - Config file: .databasemanager.yaml OR .databasemanager.toml (searched in current dir and home dir)
     - Environment variables (prefixed with DATABASEMANAGER_)
     - Command-line flags
 
   Required settings:
-    - database-hostname: PostgreSQL server hostname
-    - database-port: PostgreSQL server port (default: 5432)
-    - database-password: Admin user password
+    - database-hostname: Database server hostname
+    - database-port: Database server port
+    - database-password: Database admin user password
     - infisical-project-id: Infisical project ID
     - infisical-client-id: Infisical client ID
     - infisical-client-secret: Infisical client secret
     - infisical-site-url: Infisical server URL
 `,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		logLevel := log.InfoLevel
+
+		switch verbosity {
+		case 0:
+			logLevel = log.WarnLevel
+		case 1:
+			logLevel = log.InfoLevel
+		case 2:
+			logLevel = log.DebugLevel
+		default:
+			logLevel = log.DebugLevel
+		}
+
+		logr = logger.New(logger.LogConfig{
+			Level:   logLevel,
+			LogFile: logFile,
+		})
+
 		initializeViper()
 		if err := initConfig(); err != nil {
 			return err
@@ -84,11 +112,13 @@ Configuration:
 
 		infisicalClient, err := initInfisicalClient(&cfg)
 		if err != nil {
+			logr.Fatalf("failed to initialize infisical client: %v", err)
 			return fmt.Errorf("failed to initialize infisical client: %w", err)
 		}
 
 		databaseClient, err := initDatabaseClient(&cfg, cmd)
 		if err != nil {
+			logr.Fatalf("failed to initialize database client: %v", err)
 			return fmt.Errorf("failed to initialize database client: %w", err)
 		}
 
@@ -96,12 +126,10 @@ Configuration:
 		ctx := context.WithValue(cmd.Context(), configKey{}, &cfg)
 		ctx = context.WithValue(ctx, infisicalClientKey{}, infisicalClient)
 		ctx = context.WithValue(ctx, databaseClientKey{}, databaseClient)
+		ctx = context.WithValue(ctx, loggerKey{}, logr)
 
 		cmd.SetContext(ctx)
 
-		return nil
-	},
-	RunE: func(cmd *cobra.Command, args []string) error {
 		return nil
 	},
 }
@@ -111,6 +139,7 @@ Configuration:
 func Execute() {
 	err := rootCmd.Execute()
 	if err != nil {
+		logr.Fatal("Unable to Execute", err)
 		os.Exit(1)
 	}
 }
@@ -128,6 +157,7 @@ func init() {
 	rootCmd.PersistentFlags().String("infisical-client-secret", "", "Infisical client secret")
 	rootCmd.PersistentFlags().String("infisical-site-url", "", "Infisical site URL")
 	rootCmd.PersistentFlags().String("database", "postgres", "DatabaseName type")
+	rootCmd.PersistentFlags().CountVarP(&verbosity, "verbose", "v", "Verbosity (-v, -vv)")
 
 	viper.BindPFlag("database_hostname", rootCmd.PersistentFlags().Lookup("database-hostname"))
 	viper.BindPFlag("database_port", rootCmd.PersistentFlags().Lookup("database-port"))
@@ -136,8 +166,6 @@ func init() {
 	viper.BindPFlag("infisical_client_id", rootCmd.PersistentFlags().Lookup("infisical-client-id"))
 	viper.BindPFlag("infisical_client_secret", rootCmd.PersistentFlags().Lookup("infisical-client-secret"))
 	viper.BindPFlag("infisical_site_url", rootCmd.PersistentFlags().Lookup("infisical-site-url"))
-
-	//rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }
 
 func initInfisicalClient(cfg *config.Config) (infisical.InfisicalClientInterface, error) {
@@ -148,7 +176,10 @@ func initInfisicalClient(cfg *config.Config) (infisical.InfisicalClientInterface
 	})
 
 	_, err := client.Auth().UniversalAuthLogin(cfg.InfisicalClientId, cfg.InfisicalClientSecret)
+	logr.Debug("Infisical authentication success")
+
 	if err != nil {
+		logr.Fatal("Infisical authentication failed")
 		return nil, fmt.Errorf("authentication failed: %w", err)
 	}
 
@@ -156,12 +187,11 @@ func initInfisicalClient(cfg *config.Config) (infisical.InfisicalClientInterface
 }
 
 func initDatabaseClient(cfg *config.Config, cmd *cobra.Command) (database.Database, error) {
-	// init the client here, authentication and all
-	// add a switch case here to check type of the database - sqlite/postgres/etc
 	dbType, err := cmd.Flags().GetString("database")
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to get database flag: %w", err)
+		logr.Errorf("failed to get database flag: %v", err)
+		return nil, fmt.Errorf("failed to get database flag: %v", err)
 	}
 
 	// defaulting to postgres
@@ -172,6 +202,7 @@ func initDatabaseClient(cfg *config.Config, cmd *cobra.Command) (database.Databa
 
 	//TODO: keep these in a slice and iterate through them. Might add more databases later on
 	if dbType != "postgres" && dbType != "mysql" {
+		logr.Errorf("invalid database type %q, must be: postgres, mysql", dbType)
 		return nil, fmt.Errorf("invalid database type %q, must be: postgres, mysql", dbType)
 	}
 
@@ -180,6 +211,7 @@ func initDatabaseClient(cfg *config.Config, cmd *cobra.Command) (database.Databa
 	case "postgres":
 		postgresClient, err := database.NewPostgresClient(cfg)
 		if err != nil {
+			logr.Errorf("failed to create postgres client: %v", err)
 			return nil, fmt.Errorf("failed to create postgres client: %w", err)
 		}
 		databaseClient = postgresClient
@@ -187,38 +219,42 @@ func initDatabaseClient(cfg *config.Config, cmd *cobra.Command) (database.Databa
 	case "mysql":
 		mysqlClient, err := database.NewMySQLClient(cfg)
 		if err != nil {
+			logr.Errorf("failed to create mysql client: %v", err)
 			return nil, fmt.Errorf("failed to create mysql client: %w", err)
 		}
 		databaseClient = mysqlClient
 
 	default:
+		logr.Fatalf("unsupported database type: %s", dbType)
 		return nil, fmt.Errorf("unsupported database type: %s", dbType)
 	}
+
+	log.Infof("database type set to %s\n", dbType)
 
 	ctx := cmd.Context()
 	err = databaseClient.Connect(ctx)
 
 	if err != nil {
+		logr.Fatalf("failed to connect to %s database: %v", dbType, err)
 		return nil, fmt.Errorf("failed to connect to %s database: %w", dbType, err)
 	}
 
+	logr.Infof("connection to %s database success", dbType)
 	return databaseClient, nil
-	//return database.NewPostgresClient(cfg)
 }
 
 func GetConfig(cmd *cobra.Command) *config.Config {
 	return cmd.Context().Value(configKey{}).(*config.Config)
 }
 
-//func GetInfisicalClient(cmd *cobra.Command) *infisical.InfisicalClient {
-//	client := cmd.Context().Value(infisicalClientKey{}).(*infisical.InfisicalClient)
-//	return client
-//}
-
 func GetInfisicalClient(cmd *cobra.Command) infisical.InfisicalClientInterface {
 	return cmd.Context().Value(infisicalClientKey{}).(infisical.InfisicalClientInterface)
 }
 
-func GetDatabaseClient(cmd *cobra.Command) (database.Database, error) {
-	return cmd.Context().Value(databaseClientKey{}).(database.Database), nil
+func GetDatabaseClient(cmd *cobra.Command) database.Database {
+	return cmd.Context().Value(databaseClientKey{}).(database.Database)
+}
+
+func GetLogger(cmd *cobra.Command) (*log.Logger, error) {
+	return cmd.Context().Value(loggerKey{}).(*log.Logger), nil
 }
