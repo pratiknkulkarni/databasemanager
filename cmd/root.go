@@ -229,7 +229,7 @@ func initDatabaseClient(cfg *config.Config, cmd *cobra.Command) (database.Databa
 		return nil, fmt.Errorf("unsupported database type: %s", dbType)
 	}
 
-	log.Infof("database type set to %s\n", dbType)
+	log.Debugf("database type set to %s\n", dbType)
 
 	ctx := cmd.Context()
 	err = databaseClient.Connect(ctx)
@@ -247,8 +247,18 @@ func GetConfig(cmd *cobra.Command) *config.Config {
 	return cmd.Context().Value(configKey{}).(*config.Config)
 }
 
-func GetInfisicalClient(cmd *cobra.Command) infisical.InfisicalClientInterface {
-	return cmd.Context().Value(infisicalClientKey{}).(infisical.InfisicalClientInterface)
+func GetInfisicalClient(cmd *cobra.Command) (infisical.InfisicalClientInterface, error) {
+	v := cmd.Context().Value(infisicalClientKey{})
+	if v == nil {
+		return nil, fmt.Errorf("infisical client not present in the context")
+	}
+
+	client, ok := v.(infisical.InfisicalClientInterface)
+	if !ok {
+		return nil, fmt.Errorf("infisical client has unexpected type")
+	}
+
+	return client, nil
 }
 
 func GetDatabaseClient(cmd *cobra.Command) database.Database {

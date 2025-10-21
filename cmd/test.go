@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 
+	"github.com/charmbracelet/log"
 	infisical "github.com/infisical/go-sdk"
 	"github.com/spf13/cobra"
 )
@@ -25,18 +26,22 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		logger, err := GetLogger(cmd)
 		if err != nil {
-			logger.Errorf("unable to get logger: %v", err)
 			fmt.Fprintf(cmd.ErrOrStderr(), "Unable to get logger: %v", err)
 		}
 
-		infisicalClient := GetInfisicalClient(cmd)
+		infisicalClient, err := GetInfisicalClient(cmd)
+		if err != nil {
+			fmt.Fprintf(cmd.ErrOrStderr(), "infisical client could not be initialized: %v\n", err)
+			logger.Debugf("infisical client could not be initialized: %v\n", err)
+		}
+
 		cfg := GetConfig(cmd)
 		databaseClient := GetDatabaseClient(cmd)
 
 		logger.Info("Testing Infisical connection...\n")
 		fmt.Fprintf(cmd.OutOrStdout(), "Testing Infisical connection...\n")
 
-		if err := testInfisical(infisicalClient); err != nil {
+		if err := testInfisical(infisicalClient, logger); err != nil {
 			logger.Errorf("failed to test Infisical connection: %v\n", err)
 			return err
 		}
@@ -101,10 +106,13 @@ Examples:
 	},
 }
 
-func testInfisical(infisicalClient infisical.InfisicalClientInterface) error {
+func testInfisical(infisicalClient infisical.InfisicalClientInterface, logger *log.Logger) error {
 	if infisicalClient == nil {
+		logger.Errorf("infisical client not initialized")
 		return fmt.Errorf("infisical client not initialized")
 	}
+
+	logger.Debug("infisical client initialized successfully")
 	return nil
 }
 

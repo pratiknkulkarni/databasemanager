@@ -50,6 +50,7 @@ func New(cfg LogConfig) *log.Logger {
 	styles.Values["err"] = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
 
 	logger := log.NewWithOptions(os.Stderr, log.Options{
+		ReportCaller:    true,
 		Level:           cfg.Level,
 		ReportTimestamp: true,
 		TimeFormat:      "15:04:05",

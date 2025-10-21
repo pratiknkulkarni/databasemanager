@@ -88,7 +88,8 @@ var provisionCmd = &cobra.Command{
 			return fmt.Errorf("failed to provision database: %w", err)
 		}
 
-		infisicalClient := GetInfisicalClient(cmd)
+		//TODO: handle this error instead of ignoring it
+		infisicalClient, _ := GetInfisicalClient(cmd)
 		if infisicalClient == nil {
 			log.Printf("no infisical client in the context")
 		} else {

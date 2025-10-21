@@ -38,7 +38,8 @@ Examples:
 	RunE: func(cmd *cobra.Command, args []string) error {
 		appName := args[0]
 
-		infisicalClient := GetInfisicalClient(cmd)
+		// TODO: handle this error instead of ignoring it
+		infisicalClient, _ := GetInfisicalClient(cmd)
 		cfg := GetConfig(cmd)
 		// TODO: handle this error instead of ignoring it
 		//databaseClient, _ := GetDatabaseClient(cmd)

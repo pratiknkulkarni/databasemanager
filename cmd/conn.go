@@ -37,7 +37,9 @@ Examples:
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		appName := args[0]
-		infClient := GetInfisicalClient(cmd)
+
+		//TODO: handle this error instead of ignoring it
+		infClient, _ := GetInfisicalClient(cmd)
 		cfg := GetConfig(cmd)
 
 		if connCopy && connFormat == "table" {
