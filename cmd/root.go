@@ -16,7 +16,6 @@ import (
 
 var (
 	verbosity int
-	logFile   string
 	logr      *log.Logger
 )
 
@@ -101,8 +100,7 @@ Configuration:
 		}
 
 		logr = logger.New(logger.LogConfig{
-			Level:   logLevel,
-			LogFile: logFile,
+			Level: logLevel,
 		})
 
 		initializeViper()

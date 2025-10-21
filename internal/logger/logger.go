@@ -9,10 +9,8 @@ import (
 
 // LogConfig defines the configuration for logging
 // Level defines the log level - Warn, Info, Debug
-// LogFile defines the location of the log file. Yet to implement.
 type LogConfig struct {
-	Level   log.Level
-	LogFile string
+	Level log.Level
 }
 
 // New returns a new instance of the logger which is used throughout the application.
