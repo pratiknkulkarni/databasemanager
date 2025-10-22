@@ -86,7 +86,7 @@ Configuration:
     - infisical-site-url: Infisical server URL
 `,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		logLevel := log.InfoLevel
+		logLevel := log.DebugLevel
 
 		switch verbosity {
 		case 0:
@@ -105,6 +105,7 @@ Configuration:
 
 		initializeViper()
 		if err := initConfig(); err != nil {
+			logr.Fatalf("failed to initialize viper: %v\n", err)
 			return err
 		}
 
@@ -130,6 +131,7 @@ Configuration:
 
 		return nil
 	},
+	SilenceUsage: true,
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -137,7 +139,7 @@ Configuration:
 func Execute() {
 	err := rootCmd.Execute()
 	if err != nil {
-		logr.Fatal("Unable to Execute", err)
+		//logr.Fatal("Unable to Execute", err)
 		os.Exit(1)
 	}
 }
@@ -230,6 +232,7 @@ func initDatabaseClient(cfg *config.Config, cmd *cobra.Command) (database.Databa
 	log.Debugf("database type set to %s\n", dbType)
 
 	ctx := cmd.Context()
+
 	err = databaseClient.Connect(ctx)
 
 	if err != nil {

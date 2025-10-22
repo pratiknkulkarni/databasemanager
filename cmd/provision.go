@@ -164,6 +164,7 @@ func init() {
 
 func printProvisionSummary(w io.Writer, app, db, user, schema, password string, hide bool) {
 	// TODO: find a better way to hide this password, possible length matching the length of the password
+	// TODO: update, I have this just need to wire it down here
 	if hide {
 		password = "*****"
 	}

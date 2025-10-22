@@ -13,9 +13,11 @@ var (
 	testApp string
 )
 
+// TODO:  see if I can format this a bit better. The current is just meh
 var testCmd = &cobra.Command{
 	Use:   "test",
 	Short: "Test database and Infisical connections",
+	Args:  cobra.MaximumNArgs(1),
 	Long: `Test connectivity to the database and Infisical.
 Optionally test a specific app's database credentials.
 
@@ -24,33 +26,40 @@ Examples:
   databasemanager test --app myapp        # Test specific app's DB credentials
   databasemanager test --env prod`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		//var appName string
+		if len(args) == 1 {
+			testApp = args[0]
+		}
+
 		logger, err := GetLogger(cmd)
 		if err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Unable to get logger: %v", err)
+			//fmt.Fprintf(cmd.ErrOrStderr(), "Unable to get logger: %v\n", err)
+			return err
 		}
 
 		infisicalClient, err := GetInfisicalClient(cmd)
 		if err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "infisical client could not be initialized: %v\n", err)
+			//fmt.Fprintf(cmd.ErrOrStderr(), "infisical client could not be initialized: %v\n", err)
 			logger.Debugf("infisical client could not be initialized: %v\n", err)
+			return err
 		}
 
 		cfg := GetConfig(cmd)
 		databaseClient := GetDatabaseClient(cmd)
 
-		logger.Info("Testing Infisical connection...\n")
+		logger.Debug("Testing Infisical connection...\n")
 		fmt.Fprintf(cmd.OutOrStdout(), "Testing Infisical connection...\n")
 
 		if err := testInfisical(infisicalClient, logger); err != nil {
-			logger.Errorf("failed to test Infisical connection: %v\n", err)
+			//logger.Errorf("failed to test Infisical connection: %v\n", err)
 			return err
 		}
 
-		logger.Info("testing database connection\n")
+		logger.Debug("testing database connection\n")
 		fmt.Fprintln(cmd.OutOrStdout(), "Testing database connection...\n")
 
 		if err := databaseClient.Test(cmd.Context()); err != nil {
-			fmt.Fprintf(cmd.ErrOrStderr(), "Failed: %v\n", err)
+			//fmt.Fprintf(cmd.ErrOrStderr(), "Failed: %v\n", err)
 			logger.Errorf("database connection failed: %v", err)
 			return err
 		}
@@ -59,29 +68,19 @@ Examples:
 		logger.Info("database connection working\n")
 
 		if testApp != "" {
-			fmt.Printf("Testing app %q credentials... ", testApp)
-			fmt.Fprintf(cmd.OutOrStdout(), "Testing app %q credentials... ", testApp)
-			logger.Infof("testing app %q credentials", testApp)
+			fmt.Fprintf(cmd.OutOrStdout(), "Testing app %q credentials...\n", testApp)
+			logger.Debugf("testing app %q credentials", testApp)
 
 			secretPath := fmt.Sprintf("/%s", testApp)
-			secrets, err := infisicalClient.Secrets().List(infisical.ListSecretsOptions{
+			secrets, _ := infisicalClient.Secrets().List(infisical.ListSecretsOptions{
 				Environment: testEnv,
 				ProjectID:   cfg.InfisicalProjectId,
 				SecretPath:  secretPath,
 			})
 
-			if err != nil {
-				fmt.Fprintf(cmd.OutOrStderr(), "Failed to fetch secrets: %v\n", err)
-				logger.Errorf("failed to fetch secrets: %v\n", err)
-
-				return err
-			}
-
 			if len(secrets) == 0 {
-				fmt.Printf("No secrets found for app %q\n", testApp)
-				logger.Infof("secrets found for app %q connection working\n", testApp)
-
-				return fmt.Errorf("app %q not found", testApp)
+				logger.Debugf("credentials for app %q not found\n", testApp)
+				return fmt.Errorf("credentials for app %q not found", testApp)
 			}
 
 			secretMap := make(map[string]string)
@@ -90,22 +89,25 @@ Examples:
 			}
 
 			if err := databaseClient.TestAppConnection(cmd.Context(), secretMap); err != nil {
-				fmt.Printf("Failed: %v\n", err)
-				logger.Errorf("failed to connect to application database %v\n", err)
+				//fmt.Fprintf(cmd.ErrOrStderr(), "Failed: %v\n", err)
+				//logger.Errorf("failed to connect to application database %v\n", err)
 
 				return err
 			}
-			fmt.Println("OK\n")
+
+			fmt.Fprintln(cmd.OutOrStdout(), "OK")
 			logger.Infof("application database connection working")
 		}
 
-		fmt.Println("\nAll tests passed!")
+		fmt.Fprintln(cmd.OutOrStdout(), "All tests passed!")
 		logger.Infof("all tests passed")
 
 		return nil
 	},
 }
 
+// testInfisical checks if Infisical is reachable.
+// It just checks if the infisicalClient is not nil.
 func testInfisical(infisicalClient infisical.InfisicalClientInterface, logger *log.Logger) error {
 	if infisicalClient == nil {
 		logger.Errorf("infisical client not initialized")
