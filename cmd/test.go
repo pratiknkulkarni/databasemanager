@@ -23,7 +23,7 @@ Optionally test a specific app's database credentials.
 
 Examples:
   databasemanager test                    # Test admin connections
-  databasemanager test --app myapp        # Test specific app's DB credentials
+  databasemanager test myapp        # Test specific app's DB credentials
   databasemanager test --env prod`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		//var appName string
@@ -33,33 +33,34 @@ Examples:
 
 		logger, err := GetLogger(cmd)
 		if err != nil {
-			//fmt.Fprintf(cmd.ErrOrStderr(), "Unable to get logger: %v\n", err)
 			return err
 		}
 
 		infisicalClient, err := GetInfisicalClient(cmd)
 		if err != nil {
-			//fmt.Fprintf(cmd.ErrOrStderr(), "infisical client could not be initialized: %v\n", err)
 			logger.Debugf("infisical client could not be initialized: %v\n", err)
 			return err
 		}
 
-		cfg := GetConfig(cmd)
+		cfg, err := GetConfig(cmd)
+		if err != nil {
+			logger.Debugf("config could not be received: %v\n", err)
+			return err
+		}
+
 		databaseClient := GetDatabaseClient(cmd)
 
 		logger.Debug("Testing Infisical connection...\n")
 		fmt.Fprintf(cmd.OutOrStdout(), "Testing Infisical connection...\n")
 
 		if err := testInfisical(infisicalClient, logger); err != nil {
-			//logger.Errorf("failed to test Infisical connection: %v\n", err)
 			return err
 		}
 
 		logger.Debug("testing database connection\n")
-		fmt.Fprintln(cmd.OutOrStdout(), "Testing database connection...\n")
+		fmt.Fprintln(cmd.OutOrStdout(), "Testing database connection")
 
 		if err := databaseClient.Test(cmd.Context()); err != nil {
-			//fmt.Fprintf(cmd.ErrOrStderr(), "Failed: %v\n", err)
 			logger.Errorf("database connection failed: %v", err)
 			return err
 		}
@@ -79,8 +80,8 @@ Examples:
 			})
 
 			if len(secrets) == 0 {
-				logger.Debugf("credentials for app %q not found\n", testApp)
-				return fmt.Errorf("credentials for app %q not found", testApp)
+				logger.Debugf("credentials for app %q not found in env %s\n", testApp, testEnv)
+				return fmt.Errorf("credentials for app %q not found in env %s\n", testApp, testEnv)
 			}
 
 			secretMap := make(map[string]string)
@@ -89,9 +90,6 @@ Examples:
 			}
 
 			if err := databaseClient.TestAppConnection(cmd.Context(), secretMap); err != nil {
-				//fmt.Fprintf(cmd.ErrOrStderr(), "Failed: %v\n", err)
-				//logger.Errorf("failed to connect to application database %v\n", err)
-
 				return err
 			}
 

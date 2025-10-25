@@ -130,7 +130,3 @@ func validateDatabaseConfig(dbType string, dbCfg config.DatabaseConfig) error {
 
 	return nil
 }
-
-//func GetConfig() *config.Config {
-//	return &cfg
-//}

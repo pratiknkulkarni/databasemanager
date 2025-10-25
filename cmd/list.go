@@ -31,9 +31,18 @@ var listCmd = &cobra.Command{
 	  databasemanager list myapp --show-values				# Display sensitive information instead of masking it
 	  databasemanager list myapp DB_PASSWORD --format json	# Display output in json format instead of table`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		logger, err := GetLogger(cmd)
+		if err != nil {
+			return err
+		}
+
 		//TODO: handle this error instead of ignoring it
 		infisicalClient, _ := GetInfisicalClient(cmd)
-		cfg := GetConfig(cmd)
+		cfg, err := GetConfig(cmd)
+		if err != nil {
+			logger.Debugf("config could not be received: %v\n", err)
+			return err
+		}
 
 		switch len(args) {
 		case 0:

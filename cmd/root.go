@@ -175,6 +175,8 @@ func initInfisicalClient(cfg *config.Config) (infisical.InfisicalClientInterface
 		CacheExpiryInSeconds: 0,
 	})
 
+	// Don't move this elsewhere, it fails and calling this becomes a dependency for every single command
+	// Keep ithere please
 	_, err := client.Auth().UniversalAuthLogin(cfg.InfisicalClientId, cfg.InfisicalClientSecret)
 	logr.Debug("Infisical authentication success")
 
@@ -244,8 +246,18 @@ func initDatabaseClient(cfg *config.Config, cmd *cobra.Command) (database.Databa
 	return databaseClient, nil
 }
 
-func GetConfig(cmd *cobra.Command) *config.Config {
-	return cmd.Context().Value(configKey{}).(*config.Config)
+func GetConfig(cmd *cobra.Command) (*config.Config, error) {
+	v := cmd.Context().Value(configKey{})
+	if v == nil {
+		return nil, fmt.Errorf("config key not present in the context")
+	}
+
+	c, ok := v.(*config.Config)
+	if !ok {
+		return nil, fmt.Errorf("config object has unexpected type")
+	}
+
+	return c, nil
 }
 
 func GetInfisicalClient(cmd *cobra.Command) (infisical.InfisicalClientInterface, error) {

@@ -33,21 +33,21 @@ var provisionCmd = &cobra.Command{
 	Use:   "provision",
 	Short: "Provision a new isolated application database",
 	Long:  `Provision a new database, roles, and schema for an application.`,
+	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if len(args) != 1 {
-			return fmt.Errorf("arguments mismatch: expected 1 argument")
-		}
+		logr.Debug("initiating provision command")
+
 		appName := args[0]
 
-		//client, err := GetDatabaseClient(cmd)
-		cfg := GetConfig(cmd)
-		client, err := initDatabaseClient(cfg, cmd)
+		cfg, err := GetConfig(cmd)
+		if err != nil {
+			return fmt.Errorf("failed to get config: %w", err)
+		}
 
+		client, err := initDatabaseClient(cfg, cmd)
 		if err != nil {
 			return fmt.Errorf("failed to get database client: %w", err)
 		}
-
-		fmt.Println(client)
 
 		if dbType != "postgres" && dbType != "mysql" {
 			return fmt.Errorf("invalid database type %q, must be: postgres, mysql", dbType)
@@ -58,7 +58,7 @@ var provisionCmd = &cobra.Command{
 
 		if provisionDatabasePassword == "" {
 			provisionDatabasePassword = generateRandomPassword(16)
-			fmt.Printf("Generated random password for app: %s", appName)
+			fmt.Fprintf(cmd.OutOrStdout(), "Generated random password for app: %s", appName)
 		}
 
 		provisionOptions := database.ProvisionOptions{
@@ -82,7 +82,7 @@ var provisionCmd = &cobra.Command{
 			provisionOptions.Schema = fmt.Sprintf("%s_data", provisionOptions.AppName)
 		}
 
-		log.Printf("Provisioning database for app=%s ...", appName)
+		fmt.Fprintf(cmd.OutOrStdout(), "Provisioning database for app=%s ...", appName)
 
 		if err := client.Provision(ctx, provisionOptions); err != nil {
 			return fmt.Errorf("failed to provision database: %w", err)
@@ -93,13 +93,17 @@ var provisionCmd = &cobra.Command{
 		if infisicalClient == nil {
 			log.Printf("no infisical client in the context")
 		} else {
-			cfg := GetConfig(cmd)
+			cfg, err := GetConfig(cmd)
+			if err != nil {
+				return fmt.Errorf("failed to get config: %w", err)
+			}
+
 			env := "dev"
 			if eFlag, _ := cmd.Flags().GetString("env"); eFlag != "" {
 				env = eFlag
 			}
 
-			_, err := infisicalClient.Folders().Create(infisical.CreateFolderOptions{
+			_, err = infisicalClient.Folders().Create(infisical.CreateFolderOptions{
 				ProjectID:   cfg.InfisicalProjectId,
 				Name:        provisionOptions.AppName,
 				Environment: env,
@@ -138,7 +142,7 @@ var provisionCmd = &cobra.Command{
 			if err != nil {
 				return fmt.Errorf("failed to create secrets in Infisical: %w", err)
 			}
-			fmt.Printf("secrets for app=%s created in Infisical at path=%s env=%s", provisionOptions.AppName, secretPath, env)
+			fmt.Fprintf(cmd.OutOrStdout(), "secrets for app=%s created in Infisical at path=%s env=%s", provisionOptions.AppName, secretPath, env)
 		}
 
 		printProvisionSummary(os.Stdout, provisionOptions.AppName, provisionOptions.DatabaseName, provisionOptions.DatabaseUser, provisionOptions.Schema, provisionOptions.DatabasePassword, hidePassword)

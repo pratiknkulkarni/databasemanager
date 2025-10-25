@@ -36,11 +36,21 @@ Examples:
   databasemanager delete myapp --env prod --force`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		logger, err := GetLogger(cmd)
+		if err != nil {
+			return err
+		}
+
 		appName := args[0]
 
 		// TODO: handle this error instead of ignoring it
 		infisicalClient, _ := GetInfisicalClient(cmd)
-		cfg := GetConfig(cmd)
+		cfg, err := GetConfig(cmd)
+		if err != nil {
+			logger.Debugf("config could not be received: %v\n", err)
+			return err
+		}
+
 		// TODO: handle this error instead of ignoring it
 		//databaseClient, _ := GetDatabaseClient(cmd)
 		databaseClient, err := initDatabaseClient(cfg, cmd)

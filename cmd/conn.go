@@ -36,11 +36,20 @@ Examples:
   databasemanager conn myapp --copy --format psql     # Copy psql command to clipboard`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		logger, err := GetLogger(cmd)
+		if err != nil {
+			return err
+		}
+
 		appName := args[0]
 
 		//TODO: handle this error instead of ignoring it
 		infClient, _ := GetInfisicalClient(cmd)
-		cfg := GetConfig(cmd)
+		cfg, err := GetConfig(cmd)
+		if err != nil {
+			logger.Debugf("config could not be received: %v\n", err)
+			return err
+		}
 
 		if connCopy && connFormat == "table" {
 			return fmt.Errorf("--copy requires --format flag. Available formats: uri, psql (postgres), mysql (mysql), env")
