@@ -22,6 +22,7 @@ var (
 	provisionDatabasePassword string
 	provisionDatabaseName     string
 	provisionDatabaseHostname string
+	provisionDatabasePort     int
 	userName                  string
 	schemaName                string
 	hidePassword              bool
@@ -34,6 +35,31 @@ var provisionCmd = &cobra.Command{
 	Short: "Provision a new isolated application database",
 	Long:  `Provision a new database, roles, and schema for an application.`,
 	Args:  cobra.ExactArgs(1),
+	PreRunE: func(cmd *cobra.Command, args []string) error {
+		if dbType == "" {
+			dbType = "postgres"
+		}
+
+		// if --database postgres and no --port => port = 5432
+		// if --database mysql and no --port => port = 3306
+		// if no --database and --port <value> => port = <value>
+		// if no --database and no --port => port = 5432 (default sets to postgres since no --database)
+
+		portFlag := cmd.Flags().Lookup("port")
+		portChanged := portFlag != nil && portFlag.Changed
+
+		if !portChanged {
+			switch dbType {
+			case "postgres":
+				provisionDatabasePort = 5432
+			case "mysql":
+				provisionDatabasePort = 3306
+			default:
+				provisionDatabasePort = 5432
+			}
+		}
+		return nil
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		logr.Debug("initiating provision command")
 
@@ -65,6 +91,7 @@ var provisionCmd = &cobra.Command{
 			AppName:          args[0],
 			DatabaseHostname: provisionDatabaseHostname,
 			DatabasePassword: provisionDatabasePassword,
+			DatabasePort:     provisionDatabasePort,
 			DatabaseName:     provisionDatabaseName,
 			DatabaseUser:     userName,
 			Schema:           schemaName,
@@ -121,7 +148,7 @@ var provisionCmd = &cobra.Command{
 				{SecretKey: "DB_USER", SecretValue: provisionOptions.DatabaseUser},
 				{SecretKey: "DB_PASSWORD", SecretValue: provisionOptions.DatabasePassword},
 				{SecretKey: "DB_HOST", SecretValue: provisionOptions.DatabaseHostname},
-				{SecretKey: "DB_PORT", SecretValue: fmt.Sprintf("%d", cfg.Postgres.DatabasePort)},
+				{SecretKey: "DB_PORT", SecretValue: fmt.Sprintf("%d", provisionOptions.DatabasePort)},
 			}
 
 			// no schema for mysql
@@ -156,6 +183,7 @@ func init() {
 	rootCmd.AddCommand(provisionCmd)
 
 	provisionCmd.Flags().StringVar(&provisionDatabasePassword, "password", "", "Application database password (optional, random if empty)")
+	provisionCmd.Flags().IntVar(&provisionDatabasePort, "port", 0, "Application database port (optional)")
 	provisionCmd.Flags().StringVar(&provisionDatabaseName, "dbname", "", "Override default generated database name (optional)")
 	provisionCmd.Flags().StringVar(&userName, "user", "", "Override default generated database user (optional)")
 	provisionCmd.Flags().StringVar(&schemaName, "schema", "", "Override default generated schema name (optional)")
@@ -182,6 +210,7 @@ func printProvisionSummary(w io.Writer, app, db, user, schema, password string, 
 	fmt.Fprintf(tw, "DatabaseUser\t%s\n", user)
 	fmt.Fprintf(tw, "Schema\t%s\n", schema)
 	fmt.Fprintf(tw, "Password\t%s\n", password)
+	fmt.Fprintf(tw, "Port\t%d\n", provisionDatabasePort)
 	_ = tw.Flush()
 }
 

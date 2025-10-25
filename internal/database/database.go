@@ -8,6 +8,7 @@ type ProvisionOptions struct {
 	DatabasePassword string
 	DatabaseName     string
 	DatabaseUser     string
+	DatabasePort     int
 	DatabaseHostname string
 	Schema           string
 }

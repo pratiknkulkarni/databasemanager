@@ -35,7 +35,7 @@ var rootCmd = &cobra.Command{
 	Use:   "databasemanager",
 	Short: "a simple databasemanager to provision database and save details in Infisical Secrets Manager",
 	//TODO: I'll have to add even mysql
-	Long: `databasemanager is a CLI tool for provisioning isolated PostgreSQL and MySQL databases 
+	Long: `databasemanager is a CLI tool for provisioning isolated PostgreSQL and MySQL databases
 and securely managing their credentials in Infisical Secrets Manager.
 
 Each provisioned application gets:
@@ -63,7 +63,7 @@ Examples:
 
   # Get connection string
   databasemanager conn myapp
-  
+
   # Delete an app
   databasemanager delete myapp
 
@@ -150,7 +150,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default searches for .databasemanager.yaml in home directory and current directory)")
 
 	rootCmd.PersistentFlags().String("database-hostname", "localhost", "DatabaseName hostname")
-	rootCmd.PersistentFlags().Int("database-port", 5432, "DatabaseName port")
+	// rootCmd.PersistentFlags().Int("database-port", 5432, "DatabaseName port")
 	rootCmd.PersistentFlags().String("database-password", "", "DatabaseName password")
 	rootCmd.PersistentFlags().String("infisical-project-id", "", "Infisical project ID")
 	rootCmd.PersistentFlags().String("infisical-client-id", "", "Infisical client ID")
