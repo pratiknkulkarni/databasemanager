@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"text/tabwriter"
 	"time"
@@ -61,22 +60,28 @@ var provisionCmd = &cobra.Command{
 		return nil
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
-		logr.Debug("initiating provision command")
+		logr.Debug("initiating provision command\n")
 
 		appName := args[0]
+		logr.Debug("setting application name to %s\n", appName)
 
 		cfg, err := GetConfig(cmd)
 		if err != nil {
-			return fmt.Errorf("failed to get config: %w", err)
+			logr.Errorf("config could not be received: %v\n", err)
+			return err
 		}
+
+		logr.Debug("config received successfully\n")
 
 		client, err := initDatabaseClient(cfg, cmd)
 		if err != nil {
-			return fmt.Errorf("failed to get database client: %w", err)
+			logr.Errorf("failed to get database client: %w\n", err)
+			return err
 		}
 
 		if dbType != "postgres" && dbType != "mysql" {
-			return fmt.Errorf("invalid database type %q, must be: postgres, mysql", dbType)
+			logr.Errorf("invalid database type %q, must be: postgres, mysql\n", dbType)
+			return err
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -84,7 +89,8 @@ var provisionCmd = &cobra.Command{
 
 		if provisionDatabasePassword == "" {
 			provisionDatabasePassword = generateRandomPassword(16)
-			fmt.Fprintf(cmd.OutOrStdout(), "Generated random password for app: %s", appName)
+			fmt.Fprintf(cmd.OutOrStdout(), "Generated random password for app: %s\n", appName)
+			logr.Debugf("generated random password for app: %s\n", appName)
 		}
 
 		provisionOptions := database.ProvisionOptions{
@@ -99,34 +105,45 @@ var provisionCmd = &cobra.Command{
 
 		if provisionOptions.DatabaseName == "" {
 			provisionOptions.DatabaseName = fmt.Sprintf("%s_db", provisionOptions.AppName)
+			logr.Debugf("database name empty, setting default database name %s\n", provisionOptions.DatabaseName)
 		}
 
 		if provisionOptions.DatabaseUser == "" {
 			provisionOptions.DatabaseUser = fmt.Sprintf("%s_user", provisionOptions.AppName)
+			logr.Debugf("database user name empty, setting default database user name %s\n", provisionOptions.DatabaseUser)
 		}
 
 		if provisionOptions.Schema == "" {
 			provisionOptions.Schema = fmt.Sprintf("%s_data", provisionOptions.AppName)
+			logr.Debugf("database schema empty, setting default database schema %s\n", provisionOptions.Schema)
 		}
 
-		fmt.Fprintf(cmd.OutOrStdout(), "Provisioning database for app=%s ...", appName)
+		fmt.Fprintf(cmd.OutOrStdout(), "Provisioning database for app=%s\n", appName)
 
 		if err := client.Provision(ctx, provisionOptions); err != nil {
-			return fmt.Errorf("failed to provision database: %w", err)
+			logr.Errorf("failed to provision database: %w\n", err)
+			return err
 		}
 
 		//TODO: handle this error instead of ignoring it
-		infisicalClient, _ := GetInfisicalClient(cmd)
+		infisicalClient, err := GetInfisicalClient(cmd)
+		if err != nil {
+			logr.Errorf("unable to get the infisical client: %w\n", err)
+			return err
+		}
+
 		if infisicalClient == nil {
-			log.Printf("no infisical client in the context")
+			logr.Debug("no infisical client in the context\n")
 		} else {
 			cfg, err := GetConfig(cmd)
 			if err != nil {
-				return fmt.Errorf("failed to get config: %w", err)
+				logr.Errorf("failed to get config: %w\n", err)
+				return err
 			}
 
 			env := "dev"
 			if eFlag, _ := cmd.Flags().GetString("env"); eFlag != "" {
+				logr.Debug("setting default environment to dev\n")
 				env = eFlag
 			}
 
@@ -137,10 +154,12 @@ var provisionCmd = &cobra.Command{
 			})
 
 			if err != nil {
-				return fmt.Errorf("failed to create folder in Infisical: %w", err)
+				logr.Errorf("failed to create folder in Infisical: %w\n", err)
+				return err
 			}
 
 			secretPath := fmt.Sprintf("/%s", provisionOptions.AppName)
+			logr.Debugf("setting secret path to %s\n", secretPath)
 
 			secrets := []infisical.BatchCreateSecret{
 				{SecretKey: "DB_TYPE", SecretValue: dbType},
@@ -153,6 +172,7 @@ var provisionCmd = &cobra.Command{
 
 			// no schema for mysql
 			if dbType == "postgres" {
+				logr.Debug("database type 'postgres' adding schema name\n")
 				secrets = append(secrets, infisical.BatchCreateSecret{
 					SecretKey:   "DB_SCHEMA",
 					SecretValue: provisionOptions.Schema,
@@ -167,14 +187,19 @@ var provisionCmd = &cobra.Command{
 			})
 
 			if err != nil {
-				return fmt.Errorf("failed to create secrets in Infisical: %w", err)
+				logr.Errorf("failed to create secrets in Infisical: %w\n", err)
+				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "secrets for app=%s created in Infisical at path=%s env=%s", provisionOptions.AppName, secretPath, env)
+
+			fmt.Fprintf(cmd.OutOrStdout(), "secrets for app=%s created in Infisical at path=%s env=%s\n", provisionOptions.AppName, secretPath, env)
 		}
 
 		printProvisionSummary(os.Stdout, provisionOptions.AppName, provisionOptions.DatabaseName, provisionOptions.DatabaseUser, provisionOptions.Schema, provisionOptions.DatabasePassword, hidePassword)
+		logr.Debug("provision summary printed successfully\n")
 
-		fmt.Printf("Provisioned database for app: %s\n", appName)
+		fmt.Fprintf(cmd.OutOrStdout(), "Provisioned database for app: %s\n", appName)
+		logr.Debug("Provisioned database for app: %s\n", appName)
+
 		return nil
 	},
 }

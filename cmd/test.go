@@ -44,9 +44,11 @@ Examples:
 
 		cfg, err := GetConfig(cmd)
 		if err != nil {
-			logger.Debugf("config could not be received: %v\n", err)
+			logger.Errorf("config could not be received: %v\n", err)
 			return err
 		}
+
+		logr.Debug("config received successfully")
 
 		databaseClient := GetDatabaseClient(cmd)
 
