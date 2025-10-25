@@ -150,7 +150,6 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default searches for .databasemanager.yaml in home directory and current directory)")
 
 	rootCmd.PersistentFlags().String("database-hostname", "localhost", "DatabaseName hostname")
-	// rootCmd.PersistentFlags().Int("database-port", 5432, "DatabaseName port")
 	rootCmd.PersistentFlags().String("database-password", "", "DatabaseName password")
 	rootCmd.PersistentFlags().String("infisical-project-id", "", "Infisical project ID")
 	rootCmd.PersistentFlags().String("infisical-client-id", "", "Infisical client ID")
