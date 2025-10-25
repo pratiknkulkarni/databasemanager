@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	verbosity int
+	verbosity bool
 	logr      *log.Logger
 )
 
@@ -86,18 +86,21 @@ Configuration:
     - infisical-site-url: Infisical server URL
 `,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		logLevel := log.DebugLevel
-
-		switch verbosity {
-		case 0:
-			logLevel = log.WarnLevel
-		case 1:
-			logLevel = log.InfoLevel
-		case 2:
-			logLevel = log.DebugLevel
-		default:
+		logLevel := log.WarnLevel
+		if verbosity {
 			logLevel = log.DebugLevel
 		}
+
+		// switch verbosity {
+		// case 0:
+		// 	logLevel = log.WarnLevel
+		// case 1:
+		// 	logLevel = log.InfoLevel
+		// case 2:
+		// 	logLevel = log.DebugLevel
+		// default:
+		// 	logLevel = log.DebugLevel
+		// }
 
 		logr = logger.New(logger.LogConfig{
 			Level: logLevel,
@@ -156,7 +159,7 @@ func init() {
 	rootCmd.PersistentFlags().String("infisical-client-secret", "", "Infisical client secret")
 	rootCmd.PersistentFlags().String("infisical-site-url", "", "Infisical site URL")
 	rootCmd.PersistentFlags().String("database", "postgres", "DatabaseName type")
-	rootCmd.PersistentFlags().CountVarP(&verbosity, "verbose", "v", "Verbosity (-v, -vv)")
+	rootCmd.PersistentFlags().BoolVarP(&verbosity, "verbose", "v", false, "Enable verbose logging (DEBUG level)")
 
 	viper.BindPFlag("database_hostname", rootCmd.PersistentFlags().Lookup("database-hostname"))
 	viper.BindPFlag("database_port", rootCmd.PersistentFlags().Lookup("database-port"))

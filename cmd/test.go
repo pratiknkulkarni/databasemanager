@@ -38,7 +38,7 @@ Examples:
 
 		infisicalClient, err := GetInfisicalClient(cmd)
 		if err != nil {
-			logger.Debugf("infisical client could not be initialized: %v\n", err)
+			logger.Errorf("infisical client could not be initialized: %v\n", err)
 			return err
 		}
 
@@ -48,7 +48,7 @@ Examples:
 			return err
 		}
 
-		logr.Debug("config received successfully")
+		logr.Debug("config received successfully\n")
 
 		databaseClient := GetDatabaseClient(cmd)
 
@@ -56,6 +56,7 @@ Examples:
 		fmt.Fprintf(cmd.OutOrStdout(), "Testing Infisical connection...\n")
 
 		if err := testInfisical(infisicalClient, logger); err != nil {
+			logger.Errorf("infisical test failed\n", err)
 			return err
 		}
 
@@ -63,12 +64,12 @@ Examples:
 		fmt.Fprintln(cmd.OutOrStdout(), "Testing database connection")
 
 		if err := databaseClient.Test(cmd.Context()); err != nil {
-			logger.Errorf("database connection failed: %v", err)
+			logger.Errorf("database connection failed: %v\n", err)
 			return err
 		}
 
 		fmt.Fprintf(cmd.OutOrStdout(), "OK\n")
-		logger.Info("database connection working\n")
+		logger.Debug("database connection working\n")
 
 		if testApp != "" {
 			fmt.Fprintf(cmd.OutOrStdout(), "Testing app %q credentials...\n", testApp)
@@ -110,11 +111,11 @@ Examples:
 // It just checks if the infisicalClient is not nil.
 func testInfisical(infisicalClient infisical.InfisicalClientInterface, logger *log.Logger) error {
 	if infisicalClient == nil {
-		logger.Errorf("infisical client not initialized")
+		logger.Errorf("infisical client not initialized\n")
 		return fmt.Errorf("infisical client not initialized")
 	}
 
-	logger.Debug("infisical client initialized successfully")
+	logger.Debug("infisical client initialized successfully\n")
 	return nil
 }
 
