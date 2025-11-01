@@ -10,6 +10,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/charmbracelet/lipgloss"
 	infisical "github.com/infisical/go-sdk"
 	"github.com/spf13/cobra"
 
@@ -63,7 +64,12 @@ var provisionCmd = &cobra.Command{
 		logr.Debug("initiating provision command\n")
 
 		appName := args[0]
-		logr.Debug("setting application name to %s\n", appName)
+
+		highlight := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#2DA4FF")).
+			Bold(true)
+
+		logr.Debugf("setting application name to %s\n", highlight.Render(appName))
 
 		cfg, err := GetConfig(cmd)
 		if err != nil {
@@ -75,7 +81,7 @@ var provisionCmd = &cobra.Command{
 
 		client, err := initDatabaseClient(cfg, cmd)
 		if err != nil {
-			logr.Errorf("failed to get database client: %w\n", err)
+			logr.Errorf("failed to get database client: %v\n", err)
 			return err
 		}
 

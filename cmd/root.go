@@ -91,17 +91,6 @@ Configuration:
 			logLevel = log.DebugLevel
 		}
 
-		// switch verbosity {
-		// case 0:
-		// 	logLevel = log.WarnLevel
-		// case 1:
-		// 	logLevel = log.InfoLevel
-		// case 2:
-		// 	logLevel = log.DebugLevel
-		// default:
-		// 	logLevel = log.DebugLevel
-		// }
-
 		logr = logger.New(logger.LogConfig{
 			Level: logLevel,
 		})
@@ -244,7 +233,7 @@ func initDatabaseClient(cfg *config.Config, cmd *cobra.Command) (database.Databa
 		return nil, fmt.Errorf("failed to connect to %s database: %w", dbType, err)
 	}
 
-	logr.Infof("connection to %s database success", dbType)
+	logr.Debugf("connection to %s database success", dbType)
 	return databaseClient, nil
 }
 
