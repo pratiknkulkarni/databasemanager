@@ -50,10 +50,8 @@ func (p *PostgresClient) Connect(ctx context.Context) error {
 		return nil
 	}
 
-	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s sslmode=disable",
-		p.cfg.Postgres.DatabaseHostname, p.cfg.Postgres.DatabasePort, p.cfg.Postgres.DatabaseUser, p.cfg.Postgres.DatabasePassword)
-
-	fmt.Println(p.cfg.Postgres)
+	connStr := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+		p.cfg.Postgres.DatabaseHostname, p.cfg.Postgres.DatabasePort, p.cfg.Postgres.DatabaseUser, p.cfg.Postgres.DatabasePassword, p.cfg.Postgres.DatabaseName)
 
 	db, err := sql.Open("postgres", connStr)
 	if err != nil {
