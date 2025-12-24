@@ -1,0 +1,13 @@
+postgres:
+  database_hostname: "192.168.1.36"
+  database_port: "1648"
+  database_user: "ZXGAqTaPWHWBXPfoMjEQajPD"
+  database_password: "TMlSRHdtNvQ3jHiSxRtirfdsXu1y6f4FJUMG77Gd0m"
+  database_name: "postgres"
+
+
+infisical_project_id: "8bbfc88b-a0b6-47ec-9adf-ac76c523be15"
+infisical_client_id: "04a76577-8b28-47d3-869d-6922ad10af9e"
+infisical_client_secret: "3e78f27f0208b7e7081f25f1d8ac841e26bbd7f485cc35b41fb39c4d50b7a731"
+
+infisical_site_url: "https://infisical-backend.15092021.xyz"

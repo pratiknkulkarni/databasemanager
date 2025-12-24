@@ -23,7 +23,7 @@ func initializeViper() {
 			os.Exit(1)
 		}
 		viper.AddConfigPath(home)
-		viper.AddConfigPath(".")
+		viper.AddConfigPath("$HOME/.config")
 		viper.SetConfigName(".databasemanager")
 	}
 
