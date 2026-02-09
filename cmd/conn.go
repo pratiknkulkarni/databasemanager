@@ -233,7 +233,7 @@ func fetchAppSecrets(infClient infisical.InfisicalClientInterface, cfg *config.C
 
 	secrets, err := infClient.Secrets().List(infisical.ListSecretsOptions{
 		Environment: env,
-		ProjectID:   cfg.InfisicalProjectId,
+		ProjectID:   cfg.InfisicalProjectID,
 		SecretPath:  secretPath,
 	})
 

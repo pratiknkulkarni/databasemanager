@@ -88,10 +88,10 @@ func validateConfig(cfg config.Config) error {
 		}
 	}
 
-	if cfg.InfisicalProjectId == "" {
+	if cfg.InfisicalProjectID == "" {
 		missing = append(missing, "infisical_project_id")
 	}
-	if cfg.InfisicalClientId == "" {
+	if cfg.InfisicalClientID == "" {
 		missing = append(missing, "infisical_client_id")
 	}
 	if cfg.InfisicalClientSecret == "" {

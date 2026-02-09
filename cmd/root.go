@@ -168,12 +168,12 @@ func initInfisicalClient(cfg *config.Config) (infisical.InfisicalClientInterface
 
 	// Don't move this elsewhere, it fails and calling this becomes a dependency for every single command
 	// Keep ithere please
-	_, err := client.Auth().UniversalAuthLogin(cfg.InfisicalClientId, cfg.InfisicalClientSecret)
+	_, err := client.Auth().UniversalAuthLogin(cfg.InfisicalClientID, cfg.InfisicalClientSecret)
 	logr.Debug("Infisical authentication success")
 
 	//TODO: mask the Client Secret here
 	if err != nil {
-		logr.Fatalf("Infisical authentication failed for ClientId: %s\nClientSecret: %s\nProjectId: %s\n", cfg.InfisicalClientId, cfg.InfisicalClientSecret, cfg.InfisicalProjectId)
+		logr.Fatalf("Infisical authentication failed for ClientId: %s\nClientSecret: %s\nProjectId: %s\n", cfg.InfisicalClientID, cfg.InfisicalClientSecret, cfg.InfisicalProjectID)
 		return nil, fmt.Errorf("authentication failed: %w", err)
 	}
 

@@ -58,7 +58,7 @@ Examples:
 		secretPath := fmt.Sprintf("/%s", appName)
 		secrets, err := infisicalClient.Secrets().List(infisical.ListSecretsOptions{
 			Environment: deleteEnv,
-			ProjectID:   cfg.InfisicalProjectId,
+			ProjectID:   cfg.InfisicalProjectID,
 			SecretPath:  secretPath,
 		})
 
@@ -96,7 +96,7 @@ Examples:
 		for _, secret := range secrets {
 			deleteOptions := infisical.DeleteSecretOptions{
 				Environment: deleteEnv,
-				ProjectID:   cfg.InfisicalProjectId,
+				ProjectID:   cfg.InfisicalProjectID,
 				SecretPath:  secretPath,
 				SecretKey:   secret.SecretKey,
 			}
@@ -109,7 +109,7 @@ Examples:
 
 		_, err = infisicalClient.Folders().Delete(infisical.DeleteFolderOptions{
 			FolderName:  appName,
-			ProjectID:   cfg.InfisicalProjectId,
+			ProjectID:   cfg.InfisicalProjectID,
 			Environment: deleteEnv,
 			Path:        "/",
 		})

@@ -154,7 +154,7 @@ var provisionCmd = &cobra.Command{
 			}
 
 			_, err = infisicalClient.Folders().Create(infisical.CreateFolderOptions{
-				ProjectID:   cfg.InfisicalProjectId,
+				ProjectID:   cfg.InfisicalProjectID,
 				Name:        provisionOptions.AppName,
 				Environment: env,
 			})
@@ -188,7 +188,7 @@ var provisionCmd = &cobra.Command{
 			_, err = infisicalClient.Secrets().Batch().Create(infisical.BatchCreateSecretsOptions{
 				Environment: env,
 				SecretPath:  secretPath,
-				ProjectID:   cfg.InfisicalProjectId,
+				ProjectID:   cfg.InfisicalProjectID,
 				Secrets:     secrets,
 			})
 

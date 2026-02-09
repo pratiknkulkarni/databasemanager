@@ -78,7 +78,7 @@ Examples:
 			secretPath := fmt.Sprintf("/%s", testApp)
 			secrets, _ := infisicalClient.Secrets().List(infisical.ListSecretsOptions{
 				Environment: testEnv,
-				ProjectID:   cfg.InfisicalProjectId,
+				ProjectID:   cfg.InfisicalProjectID,
 				SecretPath:  secretPath,
 			})
 

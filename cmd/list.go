@@ -63,7 +63,7 @@ func listApps(infisicalClient infisical.InfisicalClientInterface, cfg *config.Co
 	fmt.Printf("Fetching apps from Infisical (environment: %s)...\n\n", listEnv)
 
 	folders, err := infisicalClient.Folders().List(infisical.ListFoldersOptions{
-		ProjectID:   cfg.InfisicalProjectId,
+		ProjectID:   cfg.InfisicalProjectID,
 		Environment: listEnv,
 	})
 
@@ -126,7 +126,7 @@ func listSecrets(infisicalClient infisical.InfisicalClientInterface, cfg *config
 
 	secrets, err := infisicalClient.Secrets().List(infisical.ListSecretsOptions{
 		Environment: listEnv,
-		ProjectID:   cfg.InfisicalProjectId,
+		ProjectID:   cfg.InfisicalProjectID,
 		SecretPath:  secretPath,
 	})
 
@@ -158,7 +158,7 @@ func getSecret(infisicalClient infisical.InfisicalClientInterface, cfg *config.C
 
 	secrets, err := infisicalClient.Secrets().List(infisical.ListSecretsOptions{
 		Environment: listEnv,
-		ProjectID:   cfg.InfisicalProjectId,
+		ProjectID:   cfg.InfisicalProjectID,
 		SecretPath:  secretPath,
 	})
 
