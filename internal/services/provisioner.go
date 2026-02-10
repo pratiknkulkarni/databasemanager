@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	infisical "github.com/infisical/go-sdk"
 	"github.com/praaatik/databasemanager/internal/app"
@@ -59,6 +60,8 @@ func (p *Provisioner) Run(ctx context.Context, req ProvisionRequest) (*database.
 
 // prepareOptions prepares the defaults for the databases if the user does not pass them
 func (p *Provisioner) prepareOptions(req ProvisionRequest) (*database.ProvisionOptions, error) {
+	safeAppName := strings.ReplaceAll(req.AppName, "-", "_")
+
 	password := req.DBPassword
 	if password == "" {
 		var err error
@@ -70,7 +73,7 @@ func (p *Provisioner) prepareOptions(req ProvisionRequest) (*database.ProvisionO
 
 	dbName := req.DBName
 	if dbName == "" {
-		dbName = fmt.Sprintf("%s_db", req.AppName)
+		dbName = fmt.Sprintf("%s_db", safeAppName)
 	}
 
 	schema := req.DBSchema
