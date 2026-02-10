@@ -15,8 +15,6 @@ func NewClient(cfg *config.Config) (infisical.InfisicalClientInterface, error) {
 		CacheExpiryInSeconds: 0,
 	})
 
-	//fmt.Println(client)
-
 	_, err := client.Auth().UniversalAuthLogin(cfg.InfisicalClientID, cfg.InfisicalClientSecret)
 	if err != nil {
 		return nil, fmt.Errorf("authentication failed: %w", err)
