@@ -291,8 +291,6 @@ and securely managing their credentials in Infisical Secrets Manager.`,
 				// ...decide how I want to handle logger level changes during PersistentPreRun,
 				// ...and re-enable each subcommand once I complete their refactors
 				// ...(provision, delete, list, conn, test).
-				// Ugh, this is too much. I hate refactoring.
-				// TODO: Remove this before commit
 			}
 		},
 	}
@@ -300,8 +298,7 @@ and securely managing their credentials in Infisical Secrets Manager.`,
 	cmd.PersistentFlags().String("config", "", "config file (default is $HOME/.databasemanager.yaml)")
 	cmd.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose logging")
 
-	// TODO: add each command like so ->
-	// cmd.AddCommand(newProvisionCmd(container))
+	cmd.AddCommand(newProvisionCmd(container))
 
 	return cmd
 }
