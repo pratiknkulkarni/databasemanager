@@ -41,7 +41,7 @@ func (p *PostgresClient) Connect(ctx context.Context) error {
 	}
 
 	if err := db.PingContext(ctx); err != nil {
-		db.Close()
+		_ = db.Close()
 		return fmt.Errorf("failed to ping postgres: %w", err)
 	}
 
@@ -106,7 +106,7 @@ func (p *PostgresClient) lockdownDatabase(ctx context.Context, opts ProvisionOpt
 	if err != nil {
 		return err
 	}
-	defer appDB.Close()
+	defer func() { _ = appDB.Close() }()
 
 	if err := appDB.PingContext(ctx); err != nil {
 		return fmt.Errorf("failed to connect to new db for hardening: %w", err)
@@ -161,7 +161,7 @@ func (p *PostgresClient) Delete(ctx context.Context, databaseName, userName stri
 		WHERE pg_stat_activity.datname = '%s'
 		AND pid <> pg_backend_pid();`, databaseName)
 
-	p.db.ExecContext(ctx, killQuery)
+	_, _ = p.db.ExecContext(ctx, killQuery)
 
 	_, err := p.db.ExecContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", pq.QuoteIdentifier(databaseName)))
 	if err != nil {
@@ -195,7 +195,7 @@ func (p *PostgresClient) TestAppConnection(ctx context.Context, credentials map[
 	if err != nil {
 		return fmt.Errorf("failed to create connection: %w", err)
 	}
-	defer appDB.Close()
+	defer func() { _ = appDB.Close() }()
 
 	if err := appDB.PingContext(ctx); err != nil {
 		return fmt.Errorf("connection test failed: %w", err)

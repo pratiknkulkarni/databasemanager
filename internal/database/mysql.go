@@ -50,7 +50,7 @@ func (m *MySQLClient) Connect(ctx context.Context) error {
 	}
 
 	if err := db.PingContext(ctx); err != nil {
-		db.Close()
+		_ = db.Close()
 		return fmt.Errorf("failed to ping mysql: %w", err)
 	}
 
@@ -95,7 +95,7 @@ func (m *MySQLClient) Provision(ctx context.Context, opts ProvisionOptions) (err
 	state := &provisionStateMysql{}
 	defer func() {
 		if err != nil {
-			m.rollbackProvision(ctx, opts.DatabaseName, opts.DatabaseUser, state)
+			m.rollbackProvision(opts.DatabaseName, opts.DatabaseUser, state)
 		}
 	}()
 
@@ -146,15 +146,15 @@ func (m *MySQLClient) flushPrivileges(ctx context.Context) error {
 	return err
 }
 
-func (m *MySQLClient) rollbackProvision(ctx context.Context, dbName, userName string, state *provisionStateMysql) {
+func (m *MySQLClient) rollbackProvision(dbName, userName string, state *provisionStateMysql) {
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if state.userCreated {
-		m.db.ExecContext(cleanupCtx, fmt.Sprintf("DROP USER IF EXISTS '%s'@'%%'", userName))
+		_, _ = m.db.ExecContext(cleanupCtx, fmt.Sprintf("DROP USER IF EXISTS '%s'@'%%'", userName))
 	}
 	if state.databaseCreated {
-		m.db.ExecContext(cleanupCtx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName))
+		_, _ = m.db.ExecContext(cleanupCtx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", dbName))
 	}
 }
 
@@ -198,9 +198,9 @@ func (m *MySQLClient) Delete(ctx context.Context, databaseName, userName string)
 		return err
 	}
 
-	m.db.ExecContext(ctx, fmt.Sprintf("DROP USER IF EXISTS '%s'@'%%'", userName))
-	m.db.ExecContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", databaseName))
-	m.db.ExecContext(ctx, "FLUSH PRIVILEGES")
+	_, _ = m.db.ExecContext(ctx, fmt.Sprintf("DROP USER IF EXISTS '%s'@'%%'", userName))
+	_, _ = m.db.ExecContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", databaseName))
+	_, _ = m.db.ExecContext(ctx, "FLUSH PRIVILEGES")
 	return nil
 }
 
@@ -217,7 +217,7 @@ func (m *MySQLClient) TestAppConnection(ctx context.Context, credentials map[str
 	if err != nil {
 		return fmt.Errorf("failed to create connection: %w", err)
 	}
-	defer appDB.Close()
+	defer func() { _ = appDB.Close() }()
 
 	if err := appDB.PingContext(ctx); err != nil {
 		return fmt.Errorf("connection test failed: %w", err)

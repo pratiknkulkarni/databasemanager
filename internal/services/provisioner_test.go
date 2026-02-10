@@ -18,26 +18,26 @@ type MockDB struct {
 	ProvisionOpts   database.ProvisionOptions
 }
 
-func (m *MockDB) Connect(ctx context.Context) error {
+func (m *MockDB) Connect(_ context.Context) error {
 	//TODO implement me
 	panic("implement me")
 }
 
-func (m *MockDB) Provision(ctx context.Context, opts database.ProvisionOptions) error {
+func (m *MockDB) Provision(_ context.Context, opts database.ProvisionOptions) error {
 	m.ProvisionCalled = true
 	m.ProvisionOpts = opts
 	return nil
 }
 
-func (m *MockDB) Delete(ctx context.Context, dbName, userName string) error {
+func (m *MockDB) Delete(_ context.Context, _, _ string) error {
 	return nil
 }
 
-func (m *MockDB) Test(ctx context.Context) error {
+func (m *MockDB) Test(_ context.Context) error {
 	return nil
 }
 
-func (m *MockDB) TestAppConnection(ctx context.Context, creds map[string]string) error {
+func (m *MockDB) TestAppConnection(_ context.Context, _ map[string]string) error {
 	return nil
 }
 
