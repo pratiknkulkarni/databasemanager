@@ -8,119 +8,108 @@ import (
 	"github.com/atotto/clipboard"
 	infisical "github.com/infisical/go-sdk"
 	"github.com/jedib0t/go-pretty/v6/table"
-	"github.com/spf13/cobra"
-
+	"github.com/praaatik/databasemanager/internal/app"
 	"github.com/praaatik/databasemanager/internal/config"
+	"github.com/spf13/cobra"
 )
 
-var (
-	connEnv    string
-	connFormat string
-	connType   string
-	connCopy   bool
-)
+func newConnCmd(container *app.Container) *cobra.Command {
+	var (
+		connEnv    string
+		connFormat string
+		connType   string
+		connCopy   bool
+	)
 
-var connCmd = &cobra.Command{
-	Use:   "conn <app>",
-	Short: "Get database connection string for an app",
-	Long: `Generate connection strings for an app's database in various formats.
+	cmd := &cobra.Command{
+		Use:   "conn <app>",
+		Short: "Get database connection string for an app",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			appName := args[0]
 
-By default, displays all available formats in a table with masked passwords.
-Use --format to output a specific format (unmasked) to stdout.
-Use --copy with --format to copy the unmasked connection string to clipboard.
-
-Examples:
-  databasemanager conn myapp                          # Show all formats in table (masked)
-  databasemanager conn myapp --format uri             # Print URI to stdout (unmasked)
-  databasemanager conn myapp --copy --format uri      # Copy URI to clipboard (unmasked)
-  databasemanager conn myapp --copy --format psql     # Copy psql command to clipboard`,
-	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		logger, err := GetLogger(cmd)
-		if err != nil {
-			return err
-		}
-
-		appName := args[0]
-
-		//TODO: handle this error instead of ignoring it
-		infClient, _ := GetInfisicalClient(cmd)
-		cfg, err := GetConfig(cmd)
-		if err != nil {
-			logger.Debugf("config could not be received: %v\n", err)
-			return err
-		}
-
-		if connCopy && connFormat == "table" {
-			return fmt.Errorf("--copy requires --format flag. Available formats: uri, psql (postgres), mysql (mysql), env")
-		}
-
-		secretMap, err := fetchAppSecrets(infClient, cfg, appName, connEnv)
-		if err != nil {
-			return err
-		}
-
-		detectedType, err := detectDatabaseType(secretMap)
-		if err != nil {
-			return err
-		}
-
-		dbType := detectedType
-		if connType != "" {
-			if connType != detectedType {
-				return fmt.Errorf("DB_TYPE mismatch: stored type is '%s' but --type flag specifies '%s'. Remove --type flag or use --type %s",
-					detectedType, connType, detectedType)
+			if container.Infisical == nil {
+				return fmt.Errorf("infisical client not initialized: cannot fetch secrets")
 			}
-			dbType = connType
-		} else if connFormat == "table" {
-			fmt.Printf("Detected database type: %s\n\n", detectedType)
-		}
 
-		if err := validateFormatForDatabase(dbType, connFormat); err != nil {
-			return err
-		}
+			if connCopy && connFormat == "table" {
+				return fmt.Errorf("--copy requires --format flag. Available formats: uri, psql (postgres), mysql (mysql), env")
+			}
 
-		if err := validateRequiredSecrets(secretMap, dbType); err != nil {
-			return err
-		}
-
-		generator := &ConnectionStringGenerator{
-			Host:     secretMap["DB_HOST"],
-			Port:     secretMap["DB_PORT"],
-			Database: secretMap["DB_NAME"],
-			User:     secretMap["DB_USER"],
-			Password: secretMap["DB_PASSWORD"],
-			Schema:   secretMap["DB_SCHEMA"],
-			DBType:   dbType,
-		}
-
-		if connFormat == "table" {
-			formats, err := generator.GenerateAll()
+			secretMap, err := fetchAppSecrets(container.Infisical, container.Config, appName, connEnv)
 			if err != nil {
 				return err
 			}
-			return outputConnectionTable(formats, dbType)
-		}
 
-		connString, err := generator.Generate(connFormat)
-		if err != nil {
-			return err
-		}
+			detectedType, err := detectDatabaseType(secretMap)
+			if err != nil {
+				return err
+			}
 
-		if connCopy {
-			//TODO: I need to test this somehow, disable clipboard
-			if err := clipboard.WriteAll(connString); err != nil {
-				fmt.Printf("Warning: Clipboard not available, printing to stdout instead:\n%s\n", connString)
+			dbType := detectedType
+			if connType != "" {
+				if connType != detectedType {
+					return fmt.Errorf("DB_TYPE mismatch: stored type is '%s' but --type flag specifies '%s'",
+						detectedType, connType)
+				}
+				dbType = connType
+			} else if connFormat == "table" {
+				fmt.Printf("Detected database type: %s\n\n", detectedType)
+			}
+
+			if err := validateFormatForDatabase(dbType, connFormat); err != nil {
+				return err
+			}
+
+			if err := validateRequiredSecrets(secretMap, dbType); err != nil {
+				return err
+			}
+
+			generator := &ConnectionStringGenerator{
+				Host:     secretMap["DB_HOST"],
+				Port:     secretMap["DB_PORT"],
+				Database: secretMap["DB_NAME"],
+				User:     secretMap["DB_USER"],
+				Password: secretMap["DB_PASSWORD"],
+				Schema:   secretMap["DB_SCHEMA"],
+				DBType:   dbType,
+			}
+
+			if connFormat == "table" {
+				formats, err := generator.GenerateAll()
+				if err != nil {
+					return err
+				}
+				return outputConnectionTable(formats, dbType)
+			}
+
+			connString, err := generator.Generate(connFormat)
+			if err != nil {
+				return err
+			}
+
+			if connCopy {
+				if err := clipboard.WriteAll(connString); err != nil {
+					container.Logger.Warn("Clipboard not available, printing to stdout instead")
+					fmt.Println(connString)
+					return nil
+				}
+				preview := maskPasswordMiddle(connString)
+				container.Logger.Info("Copied to clipboard", "format", strings.ToUpper(connFormat), "preview", preview)
 				return nil
 			}
-			preview := maskPasswordMiddle(connString)
-			fmt.Printf("%s copied to clipboard: %s\n", strings.ToUpper(connFormat), preview)
-			return nil
-		}
 
-		fmt.Println(connString)
-		return nil
-	},
+			fmt.Println(connString)
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&connEnv, "env", "dev", "Infisical environment")
+	cmd.Flags().StringVar(&connFormat, "format", "table", "Output format: table, uri, psql (postgres), mysql (mysql), env")
+	cmd.Flags().StringVar(&connType, "type", "", "Database type override (validates against stored DB_TYPE): postgres, mysql")
+	cmd.Flags().BoolVar(&connCopy, "copy", false, "Copy connection string to clipboard (requires --format)")
+
+	return cmd
 }
 
 // ConnectionStringGenerator handles connection string generation for different databases
@@ -411,13 +400,4 @@ func maskPasswordString(password string) string {
 		return "***"
 	}
 	return password[:2] + "***" + password[len(password)-2:]
-}
-
-func init() {
-	rootCmd.AddCommand(connCmd)
-
-	connCmd.Flags().StringVar(&connEnv, "env", "dev", "Infisical environment")
-	connCmd.Flags().StringVar(&connFormat, "format", "table", "Output format: table, uri, psql (postgres), mysql (mysql), env")
-	connCmd.Flags().StringVar(&connType, "type", "", "Database type override (validates against stored DB_TYPE): postgres, mysql")
-	connCmd.Flags().BoolVar(&connCopy, "copy", false, "Copy connection string to clipboard (requires --format)")
 }

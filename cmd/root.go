@@ -30,6 +30,9 @@ and securely managing their credentials in Infisical Secrets Manager.`,
 
 	cmd.AddCommand(newProvisionCmd(container))
 	cmd.AddCommand(newDeleteCmd(container))
+	cmd.AddCommand(newListCmd(container))
+	cmd.AddCommand(newConnCmd(container))
+	cmd.AddCommand(newTestCmd(container))
 
 	return cmd
 }
