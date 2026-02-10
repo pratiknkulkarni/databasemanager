@@ -29,6 +29,7 @@ and securely managing their credentials in Infisical Secrets Manager.`,
 	cmd.PersistentFlags().BoolP("verbose", "v", false, "Enable verbose logging")
 
 	cmd.AddCommand(newProvisionCmd(container))
+	cmd.AddCommand(newDeleteCmd(container))
 
 	return cmd
 }

@@ -1,153 +1,55 @@
 package cmd
 
 import (
-	"bufio"
 	"fmt"
-	"strings"
 
-	infisical "github.com/infisical/go-sdk"
+	"github.com/praaatik/databasemanager/internal/app"
+	"github.com/praaatik/databasemanager/internal/database"
 	"github.com/spf13/cobra"
 )
 
-var (
-	deleteEnv   string
-	deleteForce bool
-)
+func newDeleteCmd(container *app.Container) *cobra.Command {
+	var dbType string
 
-// deleteCmd represents the delete command
-var deleteCmd = &cobra.Command{
-	Use:   "delete <app>",
-	Short: "Delete app database and Infisical secrets",
-	Long: `Delete an app's database, database user, and remove its secrets from Infisical.
+	cmd := &cobra.Command{
+		Use:   "delete [app-name]",
+		Short: "Deprovision a database and user",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			appName := args[0]
+			ctx := cmd.Context()
 
-Without --force, you'll be prompted to confirm deletion of each resource.
-With --force, all resources are deleted after a single confirmation.
-
-The deletion process:
-1. Terminates all active database connections
-2. Drops the database
-3. Drops the database user
-4. Deletes the Infisical folder containing secrets
-
-Examples:
-  databasemanager delete myapp
-  databasemanager delete myapp --env prod
-  databasemanager delete myapp --force
-  databasemanager delete myapp --env prod --force`,
-	Args: cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		logger, err := GetLogger(cmd)
-		if err != nil {
-			return err
-		}
-
-		appName := args[0]
-
-		// TODO: handle this error instead of ignoring it
-		infisicalClient, _ := GetInfisicalClient(cmd)
-		cfg, err := GetConfig(cmd)
-		if err != nil {
-			logger.Debugf("config could not be received: %v\n", err)
-			return err
-		}
-
-		// TODO: handle this error instead of ignoring it
-		//databaseClient, _ := GetDatabaseClient(cmd)
-		databaseClient, err := initDatabaseClient(cfg, cmd)
-
-		secretPath := fmt.Sprintf("/%s", appName)
-		secrets, err := infisicalClient.Secrets().List(infisical.ListSecretsOptions{
-			Environment: deleteEnv,
-			ProjectID:   cfg.InfisicalProjectID,
-			SecretPath:  secretPath,
-		})
-
-		if err != nil {
-			return fmt.Errorf("failed to fetch secrets for app %q: %w", appName, err)
-		}
-
-		// This should never reach considering how the app is being provisioned, unless I manually delete from Infisical
-		if len(secrets) == 0 {
-			return fmt.Errorf("app %q not found in environment %q (no secrets found)", appName, deleteEnv)
-		}
-
-		secretMap := make(map[string]string)
-		for _, s := range secrets {
-			secretMap[s.SecretKey] = s.SecretValue
-		}
-
-		dbName := secretMap["DB_NAME"]
-		dbUser := secretMap["DB_USER"]
-
-		if dbName == "" || dbUser == "" {
-			return fmt.Errorf("incomplete secrets for app %q: missing DB_NAME or DB_USER. Unable to delete database without it", appName)
-		}
-
-		if !deleteForce {
-			getDeleteConfirmation(cmd, appName, dbName, dbUser, deleteEnv)
-		}
-
-		err = databaseClient.Delete(cmd.Context(), dbName, dbUser)
-
-		if err != nil {
-			return fmt.Errorf("failed to delete database: %w", err)
-		}
-
-		for _, secret := range secrets {
-			deleteOptions := infisical.DeleteSecretOptions{
-				Environment: deleteEnv,
-				ProjectID:   cfg.InfisicalProjectID,
-				SecretPath:  secretPath,
-				SecretKey:   secret.SecretKey,
+			switch dbType {
+			case "postgres":
+				client, err := database.NewPostgresClient(container.Config)
+				if err != nil {
+					return err
+				}
+				container.DB = client
+			case "mysql":
+				client, err := database.NewMySQLClient(container.Config)
+				if err != nil {
+					return err
+				}
+				container.DB = client
+			default:
+				return fmt.Errorf("unsupported database type: %s", dbType)
 			}
 
-			_, err := infisicalClient.Secrets().Delete(deleteOptions)
-			if err != nil {
-				return fmt.Errorf("failed to delete secret from app: %w", err)
+			dbName := fmt.Sprintf("%s_db", appName)
+			dbUser := fmt.Sprintf("%s_user", appName)
+
+			container.Logger.Info("deleting service", "app", appName, "type", dbType)
+
+			if err := container.DB.Delete(ctx, dbName, dbUser); err != nil {
+				return fmt.Errorf("failed to delete database: %w", err)
 			}
-		}
 
-		_, err = infisicalClient.Folders().Delete(infisical.DeleteFolderOptions{
-			FolderName:  appName,
-			ProjectID:   cfg.InfisicalProjectID,
-			Environment: deleteEnv,
-			Path:        "/",
-		})
-
-		if err != nil {
-			return fmt.Errorf("failed to delete app from Infisical: %w", err)
-		} else {
+			container.Logger.Info("Successfully deleted", "app", appName)
 			return nil
-		}
-	},
-}
-
-// getDeleteConfirmation prompts user to confirm deletion
-func getDeleteConfirmation(cmd *cobra.Command, appName, dbName, dbUser, env string) bool {
-	out := cmd.ErrOrStderr()
-	in := cmd.InOrStdin()
-
-	fmt.Fprintln(out, "You are about to delete app:", appName)
-	fmt.Fprintf(out, "Environment: %s\n\n", env)
-	fmt.Fprintln(out, "This will delete:")
-	fmt.Fprintf(out, " - App from Infisical: /%s\n\n", appName)
-	fmt.Fprintf(out, "  - DatabaseName: %s\n", dbName)
-	fmt.Fprintf(out, "  - DatabaseName user: %s\n", dbUser)
-	fmt.Fprint(out, "Type 'y' to confirm deletion: ")
-
-	reader := bufio.NewReader(in)
-	input, err := reader.ReadString('\n')
-	if err != nil {
-		fmt.Fprintln(cmd.ErrOrStderr(), "\nfailed to read confirmation: ", err)
+		},
 	}
 
-	input = strings.TrimSpace(strings.ToLower(input))
-	return input == "y"
-}
-
-func init() {
-	rootCmd.AddCommand(deleteCmd)
-
-	deleteCmd.Flags().StringVarP(&deleteEnv, "env", "e", "dev", "Infisical environment to write secrets into")
-	deleteCmd.Flags().BoolVarP(&deleteForce, "force", "f", false, "Force delete without user confirmation.")
+	cmd.Flags().StringVar(&dbType, "type", "postgres", "Database type (postgres|mysql)")
+	return cmd
 }
