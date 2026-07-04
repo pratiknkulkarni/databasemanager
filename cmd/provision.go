@@ -11,11 +11,14 @@ import (
 
 func newProvisionCmd(container *app.Container) *cobra.Command {
 	var (
-		dbType string
-		dbUser string
-		dbPass string
-		dbName string
-		env    string
+		dbType   string
+		dbUser   string
+		dbPass   string
+		dbName   string
+		dbSchema string
+		dbHost   string
+		dbPort   int
+		env      string
 	)
 
 	cmd := &cobra.Command{
@@ -26,32 +29,31 @@ func newProvisionCmd(container *app.Container) *cobra.Command {
 			appName := args[0]
 			ctx := cmd.Context()
 
-			switch dbType {
-			case "postgres":
-				client, err := database.NewPostgresClient(container.Config)
-				if err != nil {
-					return err
-				}
-				container.DB = client
-			case "mysql":
-				client, err := database.NewMySQLClient(container.Config)
-				if err != nil {
-					return err
-				}
-				container.DB = client
-			default:
-				return fmt.Errorf("unsupported database type: %s", dbType)
+			engineCfg, _ := container.Config.Engine(dbType)
+			db, err := database.New(dbType, engineCfg)
+			if err != nil {
+				return err
 			}
+			defer func() { _ = db.Close() }()
 
-			provisioner := services.NewProvisioner(container)
+			provisioner := services.NewProvisioner(services.ProvisionerDeps{
+				DB:        db,
+				Secrets:   container.Infisical,
+				Logger:    container.Logger,
+				ProjectID: container.Config.InfisicalProjectID,
+				Engine:    dbType,
+				EngineCfg: engineCfg,
+			})
 
 			req := services.ProvisionRequest{
 				AppName:     appName,
-				Type:        dbType,
 				Environment: env,
 				DBName:      dbName,
 				DBUser:      dbUser,
 				DBPassword:  dbPass,
+				DBSchema:    dbSchema,
+				Host:        dbHost,
+				Port:        dbPort,
 			}
 
 			result, err := provisioner.Run(ctx, req)
@@ -59,11 +61,21 @@ func newProvisionCmd(container *app.Container) *cobra.Command {
 				return err
 			}
 
-			container.Logger.Info("Successfully provisioned",
-				"app", appName,
-				"db_name", result.DatabaseName,
-				"connection", "Secrets synced to Infisical")
+			if result.Synced {
+				container.Logger.Info("Successfully provisioned",
+					"app", appName,
+					"db_name", result.Options.DatabaseName,
+					"connection", "Secrets synced to Infisical")
+				return nil
+			}
 
+			// Not synced: this terminal output is the only copy of the
+			// generated credentials — print them or they are lost.
+			container.Logger.Warn("Provisioned WITHOUT secret sync — record these credentials now, they are not stored anywhere",
+				"app", appName)
+			for _, kv := range result.Credentials.ToSecrets() {
+				fmt.Printf("%s=%s\n", kv.Key, kv.Value)
+			}
 			return nil
 		},
 	}
@@ -73,6 +85,9 @@ func newProvisionCmd(container *app.Container) *cobra.Command {
 	cmd.Flags().StringVar(&dbUser, "user", "", "Override database user (default: auto-generated)")
 	cmd.Flags().StringVar(&dbPass, "pass", "", "Override database password (default: secure random)")
 	cmd.Flags().StringVar(&dbName, "db", "", "Override database name (default: auto-generated)")
+	cmd.Flags().StringVar(&dbSchema, "schema", "", "Override schema name, postgres only (default: public)")
+	cmd.Flags().StringVar(&dbHost, "host", "", "Override recorded database host (default: engine config)")
+	cmd.Flags().IntVar(&dbPort, "port", 0, "Override recorded database port (default: engine config)")
 
 	return cmd
 }

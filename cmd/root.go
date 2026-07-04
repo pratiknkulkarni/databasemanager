@@ -1,11 +1,19 @@
 package cmd
 
 import (
+	"fmt"
+
+	"github.com/charmbracelet/log"
 	"github.com/praaatik/databasemanager/internal/app"
+	"github.com/praaatik/databasemanager/internal/config"
+	"github.com/praaatik/databasemanager/internal/infisical"
 	"github.com/spf13/cobra"
 )
 
-// NewRootCmd creates the root command with dependencies injected.
+// NewRootCmd creates the root command. The container arrives with only the
+// logger set; config and the Infisical client are populated here, after Cobra
+// has parsed the persistent flags, so --config (both forms) and --verbose
+// actually take effect.
 func NewRootCmd(container *app.Container) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "databasemanager",
@@ -13,15 +21,27 @@ func NewRootCmd(container *app.Container) *cobra.Command {
 		Long: `databasemanager is a CLI tool for provisioning isolated PostgreSQL and MySQL databases
 and securely managing their credentials in Infisical Secrets Manager.`,
 		SilenceUsage: true,
-		PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			verbose, _ := cmd.Flags().GetBool("verbose")
 			if verbose {
-				// TODO: I need to finish shaping the root Cobra command
-				// ...inject the app container, wire up config + verbose flags,
-				// ...decide how I want to handle logger level changes during PersistentPreRun,
-				// ...and re-enable each subcommand once I complete their refactors
-				// ...(provision, delete, list, conn, test).
+				container.Logger.SetLevel(log.DebugLevel)
 			}
+
+			cfgPath, _ := cmd.Flags().GetString("config")
+			cfg, err := config.Load(cfgPath)
+			if err != nil {
+				return fmt.Errorf("failed to load configuration: %w", err)
+			}
+			container.Config = cfg
+
+			client, err := infisical.NewClient(cmd.Context(), cfg)
+			if err != nil {
+				container.Logger.Warn("infisical unavailable; continuing without secret sync", "err", err)
+			} else {
+				container.Infisical = client
+			}
+
+			return nil
 		},
 	}
 

@@ -4,38 +4,37 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"sync"
+	"time"
 
 	"github.com/lib/pq"
 	"github.com/praaatik/databasemanager/internal/config"
 )
 
 type PostgresClient struct {
-	cfg *config.Config
+	cfg config.DatabaseConfig
 	db  *sql.DB
-	mu  sync.RWMutex
 }
 
-func NewPostgresClient(cfg *config.Config) (*PostgresClient, error) {
-	return &PostgresClient{cfg: cfg}, nil
+func newPostgresClient(cfg config.DatabaseConfig) *PostgresClient {
+	return &PostgresClient{cfg: cfg}
 }
 
-func (p *PostgresClient) Connect(ctx context.Context) error {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+// dsn builds the admin DSN, connecting to the given database name.
+func (p *PostgresClient) dsn(dbName string) string {
+	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+		p.cfg.DatabaseHostname,
+		p.cfg.DatabasePort,
+		p.cfg.DatabaseUser,
+		p.cfg.DatabasePassword,
+		dbName)
+}
 
+func (p *PostgresClient) ensureConnection(ctx context.Context) error {
 	if p.db != nil {
 		return nil
 	}
 
-	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		p.cfg.Postgres.DatabaseHostname,
-		p.cfg.Postgres.DatabasePort,
-		p.cfg.Postgres.DatabaseUser,
-		p.cfg.Postgres.DatabasePassword,
-		p.cfg.Postgres.DatabaseName)
-
-	db, err := sql.Open("postgres", dsn)
+	db, err := sql.Open("postgres", p.dsn(p.cfg.DatabaseName))
 	if err != nil {
 		return fmt.Errorf("failed to open postgres connection: %w", err)
 	}
@@ -49,17 +48,26 @@ func (p *PostgresClient) Connect(ctx context.Context) error {
 	return nil
 }
 
-func (p *PostgresClient) ensureConnection(ctx context.Context) error {
-	p.mu.RLock()
-	if p.db != nil {
-		p.mu.RUnlock()
+// Close releases the admin connection pool.
+func (p *PostgresClient) Close() error {
+	if p.db == nil {
 		return nil
 	}
-	p.mu.RUnlock()
-	return p.Connect(ctx)
+	err := p.db.Close()
+	p.db = nil
+	return err
 }
 
-func (p *PostgresClient) Provision(ctx context.Context, opts ProvisionOptions) error {
+func (p *PostgresClient) databaseExists(ctx context.Context, name string) (bool, error) {
+	var exists bool
+	err := p.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)", name).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+func (p *PostgresClient) Provision(ctx context.Context, opts ProvisionOptions) (err error) {
 	if err := opts.Validate(); err != nil {
 		return fmt.Errorf("invalid provision options: %w", err)
 	}
@@ -68,41 +76,63 @@ func (p *PostgresClient) Provision(ctx context.Context, opts ProvisionOptions) e
 		return err
 	}
 
+	exists, err := p.databaseExists(ctx, opts.DatabaseName)
+	if err != nil {
+		return fmt.Errorf("failed to check if database exists: %w", err)
+	}
+	if exists {
+		return fmt.Errorf("database %q already exists", opts.DatabaseName)
+	}
+
+	state := &provisionState{}
+	defer func() {
+		if err != nil {
+			p.rollbackProvision(opts.DatabaseName, opts.DatabaseUser, state)
+		}
+	}()
+
 	userStr := pq.QuoteIdentifier(opts.DatabaseUser)
 	dbStr := pq.QuoteIdentifier(opts.DatabaseName)
 
 	// 1. Create User
-	_, err := p.db.ExecContext(ctx, fmt.Sprintf("CREATE USER %s WITH PASSWORD '%s'", userStr, opts.DatabasePassword))
+	_, err = p.db.ExecContext(ctx, fmt.Sprintf("CREATE USER %s WITH PASSWORD %s", userStr, pq.QuoteLiteral(opts.DatabasePassword)))
 	if err != nil {
 		return fmt.Errorf("failed to create user: %w", err)
 	}
+	state.userCreated = true
 
 	// 2. Create Database
 	_, err = p.db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE %s OWNER %s", dbStr, userStr))
 	if err != nil {
 		return fmt.Errorf("failed to create database: %w", err)
 	}
+	state.databaseCreated = true
 
 	// 3. HARDENING: Connect to the new DB to lock it down
-	if err := p.lockdownDatabase(ctx, opts); err != nil {
-		// If lockdown fails, I should technically rollback, but for this tool, logging the error is often enough.
-		// It gets a bit too complicated.
+	if err = p.lockdownDatabase(ctx, opts); err != nil {
 		return fmt.Errorf("failed to apply security hardening: %w", err)
 	}
 
 	return nil
 }
 
+// rollbackProvision drops whatever a failed provisioning run created. It uses
+// a fresh context because the request context may already be cancelled.
+func (p *PostgresClient) rollbackProvision(dbName, userName string, state *provisionState) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if state.databaseCreated {
+		_, _ = p.db.ExecContext(cleanupCtx, "DROP DATABASE IF EXISTS "+pq.QuoteIdentifier(dbName))
+	}
+	if state.userCreated {
+		_, _ = p.db.ExecContext(cleanupCtx, "DROP USER IF EXISTS "+pq.QuoteIdentifier(userName))
+	}
+}
+
 // lockdownDatabase connects to the specific app database to revoke default public privileges
 func (p *PostgresClient) lockdownDatabase(ctx context.Context, opts ProvisionOptions) error {
-	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		p.cfg.Postgres.DatabaseHostname,
-		p.cfg.Postgres.DatabasePort,
-		p.cfg.Postgres.DatabaseUser,
-		p.cfg.Postgres.DatabasePassword,
-		opts.DatabaseName) // Connecting to the new DB
-
-	appDB, err := sql.Open("postgres", dsn)
+	appDB, err := sql.Open("postgres", p.dsn(opts.DatabaseName))
 	if err != nil {
 		return err
 	}
@@ -113,10 +143,12 @@ func (p *PostgresClient) lockdownDatabase(ctx context.Context, opts ProvisionOpt
 	}
 
 	// 3a. Revoke PUBLIC Connect on the Database
-	_, err = appDB.ExecContext(ctx, "REVOKE CONNECT ON DATABASE "+pq.QuoteIdentifier(opts.DatabaseName)+" FROM PUBLIC")
+	if _, err := appDB.ExecContext(ctx, "REVOKE CONNECT ON DATABASE "+pq.QuoteIdentifier(opts.DatabaseName)+" FROM PUBLIC"); err != nil {
+		return fmt.Errorf("failed to revoke public connect: %w", err)
+	}
 
 	// 3b. Isolate Public Schema
-	adminUser := pq.QuoteIdentifier(p.cfg.Postgres.DatabaseUser)
+	adminUser := pq.QuoteIdentifier(p.cfg.DatabaseUser)
 
 	// Make Admin the owner of public schema (so the app user can't mess with it easily)
 	if _, err := appDB.ExecContext(ctx, fmt.Sprintf("ALTER SCHEMA public OWNER TO %s", adminUser)); err != nil {
@@ -129,19 +161,15 @@ func (p *PostgresClient) lockdownDatabase(ctx context.Context, opts ProvisionOpt
 	}
 
 	// 3c. Grant Schema Usage to the App User (explicitly)
+	userStr := pq.QuoteIdentifier(opts.DatabaseUser)
 	if opts.Schema == "public" {
-		userStr := pq.QuoteIdentifier(opts.DatabaseUser)
-		_, err = appDB.ExecContext(ctx, fmt.Sprintf("GRANT ALL ON SCHEMA public TO %s", userStr))
-		if err != nil {
+		if _, err := appDB.ExecContext(ctx, fmt.Sprintf("GRANT ALL ON SCHEMA public TO %s", userStr)); err != nil {
 			return fmt.Errorf("failed to grant schema access to user: %w", err)
 		}
 	} else if opts.Schema != "" {
 		// Create Custom Schema
-		userStr := pq.QuoteIdentifier(opts.DatabaseUser)
 		schemaStr := pq.QuoteIdentifier(opts.Schema)
-
-		_, err = appDB.ExecContext(ctx, fmt.Sprintf("CREATE SCHEMA %s AUTHORIZATION %s", schemaStr, userStr))
-		if err != nil {
+		if _, err := appDB.ExecContext(ctx, fmt.Sprintf("CREATE SCHEMA %s AUTHORIZATION %s", schemaStr, userStr)); err != nil {
 			return fmt.Errorf("failed to create custom schema: %w", err)
 		}
 	}
@@ -154,42 +182,30 @@ func (p *PostgresClient) Delete(ctx context.Context, databaseName, userName stri
 		return err
 	}
 
-	// Terminate connections first
+	// Terminate connections first (best effort).
 	killQuery := fmt.Sprintf(`
 		SELECT pg_terminate_backend(pg_stat_activity.pid)
 		FROM pg_stat_activity
-		WHERE pg_stat_activity.datname = '%s'
-		AND pid <> pg_backend_pid();`, databaseName)
+		WHERE pg_stat_activity.datname = %s
+		AND pid <> pg_backend_pid();`, pq.QuoteLiteral(databaseName))
 
 	_, _ = p.db.ExecContext(ctx, killQuery)
 
-	_, err := p.db.ExecContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS %s", pq.QuoteIdentifier(databaseName)))
-	if err != nil {
+	if _, err := p.db.ExecContext(ctx, "DROP DATABASE IF EXISTS "+pq.QuoteIdentifier(databaseName)); err != nil {
 		return fmt.Errorf("failed to drop database: %w", err)
 	}
 
-	_, err = p.db.ExecContext(ctx, fmt.Sprintf("DROP USER IF EXISTS %s", pq.QuoteIdentifier(userName)))
-	if err != nil {
+	if _, err := p.db.ExecContext(ctx, "DROP USER IF EXISTS "+pq.QuoteIdentifier(userName)); err != nil {
 		return fmt.Errorf("failed to drop user: %w", err)
 	}
 
 	return nil
 }
 
-// TestAppConnection tests a database connection using app credentials
-func (p *PostgresClient) TestAppConnection(ctx context.Context, credentials map[string]string) error {
-	host := credentials["DB_HOST"]
-	port := credentials["DB_PORT"]
-	dbName := credentials["DB_NAME"]
-	user := credentials["DB_USER"]
-	password := credentials["DB_PASSWORD"]
-
-	if host == "" || port == "" || dbName == "" || user == "" || password == "" {
-		return fmt.Errorf("missing required credentials")
-	}
-
+// testPostgresAppConnection dials postgres with provisioned app credentials.
+func testPostgresAppConnection(ctx context.Context, creds Credentials) error {
 	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
-		user, password, host, port, dbName)
+		creds.User, creds.Password, creds.Host, creds.Port, creds.Name)
 
 	appDB, err := sql.Open("postgres", dsn)
 	if err != nil {
@@ -201,11 +217,4 @@ func (p *PostgresClient) TestAppConnection(ctx context.Context, credentials map[
 		return fmt.Errorf("connection test failed: %w", err)
 	}
 	return nil
-}
-
-func (p *PostgresClient) Test(ctx context.Context) error {
-	if err := p.ensureConnection(ctx); err != nil {
-		return err
-	}
-	return p.db.PingContext(ctx)
 }

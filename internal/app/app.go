@@ -4,13 +4,14 @@ import (
 	"github.com/charmbracelet/log"
 	infisical "github.com/infisical/go-sdk"
 	"github.com/praaatik/databasemanager/internal/config"
-	"github.com/praaatik/databasemanager/internal/database"
 )
 
-// Container holds the application's dependencies.
+// Container holds the process-wide dependencies wired at the composition
+// root. It is populated once (root command PersistentPreRunE) and must not be
+// mutated afterwards; per-invocation dependencies such as the database engine
+// adapter are constructed inside the command that needs them.
 type Container struct {
 	Config    *config.Config
 	Logger    *log.Logger
-	DB        database.Database
 	Infisical infisical.InfisicalClientInterface
 }

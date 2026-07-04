@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/log"
 	infisical "github.com/infisical/go-sdk"
 	"github.com/infisical/go-sdk/packages/models"
 	"github.com/jedib0t/go-pretty/v6/table"
@@ -38,11 +39,11 @@ Examples:
 
 			switch len(args) {
 			case 0:
-				return listApps(container.Infisical, container.Config, listEnv, listFormat)
+				return listApps(container.Infisical, container.Config, container.Logger, listEnv, listFormat)
 			case 1:
-				return listSecrets(container.Infisical, container.Config, args[0], listEnv, listFormat, listShowValue)
+				return listSecrets(container.Infisical, container.Config, container.Logger, args[0], listEnv, listFormat, listShowValue)
 			case 2:
-				return getSecret(container.Infisical, container.Config, args[0], args[1], listEnv, listFormat, listShowValue)
+				return getSecret(container.Infisical, container.Config, container.Logger, args[0], args[1], listEnv, listFormat, listShowValue)
 			default:
 				return fmt.Errorf("too many arguments: expected 0-2, got %d", len(args))
 			}
@@ -56,9 +57,10 @@ Examples:
 	return cmd
 }
 
-// listApps retrieves and displays all apps (folders) in the Infisical project
-func listApps(client infisical.InfisicalClientInterface, cfg *config.Config, env, format string) error {
-	fmt.Printf("Fetching apps from Infisical (environment: %s)...\n\n", env)
+// listApps retrieves and displays all apps (folders) in the Infisical project.
+// Status messages go to the logger (stderr); only data is written to stdout.
+func listApps(client infisical.InfisicalClientInterface, cfg *config.Config, logger *log.Logger, env, format string) error {
+	logger.Info("Fetching apps from Infisical", "env", env)
 
 	folders, err := client.Folders().List(infisical.ListFoldersOptions{
 		ProjectID:   cfg.InfisicalProjectID,
@@ -85,10 +87,10 @@ func listApps(client infisical.InfisicalClientInterface, cfg *config.Config, env
 }
 
 // listSecrets retrieves and displays all secrets for a specific app
-func listSecrets(client infisical.InfisicalClientInterface, cfg *config.Config, appName, env, format string, showValues bool) error {
+func listSecrets(client infisical.InfisicalClientInterface, cfg *config.Config, logger *log.Logger, appName, env, format string, showValues bool) error {
 	secretPath := fmt.Sprintf("/%s", appName)
 
-	fmt.Printf("Fetching secrets for app %q (environment: %s)...\n\n", appName, env)
+	logger.Info("Fetching secrets", "app", appName, "env", env)
 
 	secrets, err := client.Secrets().List(infisical.ListSecretsOptions{
 		Environment: env,
@@ -116,10 +118,10 @@ func listSecrets(client infisical.InfisicalClientInterface, cfg *config.Config, 
 }
 
 // getSecret retrieves and displays a secret for a specific app for a key
-func getSecret(client infisical.InfisicalClientInterface, cfg *config.Config, appName, secretKey, env, format string, showValues bool) error {
+func getSecret(client infisical.InfisicalClientInterface, cfg *config.Config, logger *log.Logger, appName, secretKey, env, format string, showValues bool) error {
 	secretPath := fmt.Sprintf("/%s", appName)
 
-	fmt.Printf("Fetching secret %q from app %q (environment: %s)...\n\n", secretKey, appName, env)
+	logger.Info("Fetching secret", "key", secretKey, "app", appName, "env", env)
 
 	secrets, err := client.Secrets().List(infisical.ListSecretsOptions{
 		Environment: env,

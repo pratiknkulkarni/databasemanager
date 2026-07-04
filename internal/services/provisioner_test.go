@@ -2,10 +2,10 @@ package services
 
 import (
 	"context"
+	"io"
 	"testing"
 
 	"github.com/charmbracelet/log"
-	"github.com/praaatik/databasemanager/internal/app"
 	"github.com/praaatik/databasemanager/internal/config"
 	"github.com/praaatik/databasemanager/internal/database"
 )
@@ -16,11 +16,9 @@ import (
 type MockDB struct {
 	ProvisionCalled bool
 	ProvisionOpts   database.ProvisionOptions
-}
-
-func (m *MockDB) Connect(_ context.Context) error {
-	//TODO implement me
-	panic("implement me")
+	DeleteCalled    bool
+	DeletedName     string
+	DeletedUser     string
 }
 
 func (m *MockDB) Provision(_ context.Context, opts database.ProvisionOptions) error {
@@ -29,44 +27,41 @@ func (m *MockDB) Provision(_ context.Context, opts database.ProvisionOptions) er
 	return nil
 }
 
-func (m *MockDB) Delete(_ context.Context, _, _ string) error {
+func (m *MockDB) Delete(_ context.Context, databaseName, userName string) error {
+	m.DeleteCalled = true
+	m.DeletedName = databaseName
+	m.DeletedUser = userName
 	return nil
 }
 
-func (m *MockDB) Test(_ context.Context) error {
+func (m *MockDB) Close() error {
 	return nil
 }
 
-func (m *MockDB) TestAppConnection(_ context.Context, _ map[string]string) error {
-	return nil
+func newTestProvisioner(mockDB *MockDB, engine string, engineCfg config.DatabaseConfig) *Provisioner {
+	return NewProvisioner(ProvisionerDeps{
+		DB:        mockDB,
+		Secrets:   nil, // Intentionally nil: provisioning must not panic offline
+		Logger:    log.New(io.Discard),
+		ProjectID: "test-project",
+		Engine:    engine,
+		EngineCfg: engineCfg,
+	})
 }
 
 // --- Tests ---
 
 func TestProvisioner_Run_Defaults(t *testing.T) {
-	// 1. Setup
 	mockDB := &MockDB{}
-	cfg := &config.Config{
-		Postgres: config.DatabaseConfig{
-			DatabaseHostname: "localhost",
-			DatabasePort:     5432,
-		},
+	engineCfg := config.DatabaseConfig{
+		DatabaseHostname: "localhost",
+		DatabasePort:     5432,
 	}
 
-	// We inject the MockDB into the container
-	container := &app.Container{
-		Config:    cfg,
-		Logger:    log.New(nil), // Silent logger
-		DB:        mockDB,
-		Infisical: nil, // Intentionally nil to verify it doesn't panic
-	}
+	provisioner := newTestProvisioner(mockDB, database.EnginePostgres, engineCfg)
 
-	provisioner := NewProvisioner(container)
-
-	// 2. Execution
 	req := ProvisionRequest{
 		AppName: "test-service",
-		Type:    "postgres",
 	}
 
 	result, err := provisioner.Run(context.Background(), req)
@@ -74,54 +69,85 @@ func TestProvisioner_Run_Defaults(t *testing.T) {
 		t.Fatalf("expected no error, got %v", err)
 	}
 
-	// 3. Assertions
-
-	// Did it call the DB?
 	if !mockDB.ProvisionCalled {
 		t.Error("expected DB.Provision to be called")
 	}
 
-	// Did it generate the right names?
-	expectedDB := "test_service_db"
-	if result.DatabaseName != expectedDB {
-		t.Errorf("expected db name '%s', got '%s'", expectedDB, result.DatabaseName)
+	// Both derived names must be sanitized: the hyphen in the app name maps
+	// to an underscore in the database name AND the user name.
+	if got, want := result.Options.DatabaseName, "test_service_db"; got != want {
+		t.Errorf("expected db name %q, got %q", want, got)
+	}
+	if got, want := result.Options.DatabaseUser, "test_service_user"; got != want {
+		t.Errorf("expected db user %q, got %q", want, got)
 	}
 
-	// Did it default to public schema for Postgres?
-	if result.Schema != "public" {
-		t.Errorf("expected default schema 'public', got '%s'", result.Schema)
+	if result.Options.Schema != "public" {
+		t.Errorf("expected default schema 'public', got %q", result.Options.Schema)
 	}
 
-	// Did it generate a password?
-	if len(result.DatabasePassword) == 0 {
+	if len(result.Options.DatabasePassword) == 0 {
 		t.Error("expected password to be generated")
+	}
+
+	// With a nil Infisical client, the result must not claim the secrets
+	// were synced.
+	if result.Synced {
+		t.Error("expected Synced=false when Infisical client is nil")
+	}
+
+	// The credentials mirror the provisioned options.
+	if result.Credentials.Password != result.Options.DatabasePassword {
+		t.Error("expected result credentials to carry the generated password")
+	}
+	if result.Credentials.Type != database.EnginePostgres {
+		t.Errorf("expected credentials type 'postgres', got %q", result.Credentials.Type)
+	}
+}
+
+func TestProvisioner_Run_RecordsEngineConfigFacts(t *testing.T) {
+	mockDB := &MockDB{}
+	// Non-default port: the recorded connection facts must come from the
+	// engine configuration the adapter dials with, not hardcoded defaults.
+	engineCfg := config.DatabaseConfig{
+		DatabaseHostname: "db.internal",
+		DatabasePort:     5433,
+	}
+
+	provisioner := newTestProvisioner(mockDB, database.EnginePostgres, engineCfg)
+
+	result, err := provisioner.Run(context.Background(), ProvisionRequest{AppName: "myapp"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got, want := result.Options.DatabaseHostname, "db.internal"; got != want {
+		t.Errorf("expected recorded host %q, got %q", want, got)
+	}
+	if got, want := result.Options.DatabasePort, 5433; got != want {
+		t.Errorf("expected recorded port %d, got %d", want, got)
+	}
+	if got, want := result.Credentials.Port, "5433"; got != want {
+		t.Errorf("expected credentials port %q, got %q", want, got)
 	}
 }
 
 func TestProvisioner_Run_Overrides(t *testing.T) {
 	mockDB := &MockDB{}
-	cfg := &config.Config{
-		MySQL: config.DatabaseConfig{
-			DatabaseHostname: "127.0.0.1",
-			DatabasePort:     3306,
-		},
+	engineCfg := config.DatabaseConfig{
+		DatabaseHostname: "127.0.0.1",
+		DatabasePort:     3306,
 	}
 
-	container := &app.Container{
-		Config: cfg,
-		Logger: log.New(nil),
-		DB:     mockDB,
-	}
-
-	provisioner := NewProvisioner(container)
+	provisioner := newTestProvisioner(mockDB, database.EngineMySQL, engineCfg)
 
 	req := ProvisionRequest{
 		AppName:    "legacy-app",
-		Type:       "mysql",
 		DBName:     "custom_db_name",
 		DBUser:     "custom_user",
 		DBPassword: "StaticPassword123!",
-		DBSchema:   "ignored_for_mysql", // Should be ignored or handled
+		Host:       "override.host",
+		Port:       3307,
 	}
 
 	result, err := provisioner.Run(context.Background(), req)
@@ -129,19 +155,63 @@ func TestProvisioner_Run_Overrides(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Verify Overrides
 	if mockDB.ProvisionOpts.DatabaseName != "custom_db_name" {
-		t.Errorf("expected db name override to 'custom_db_name', got '%s'", mockDB.ProvisionOpts.DatabaseName)
+		t.Errorf("expected db name override to 'custom_db_name', got %q", mockDB.ProvisionOpts.DatabaseName)
 	}
 	if mockDB.ProvisionOpts.DatabaseUser != "custom_user" {
-		t.Errorf("expected db user override to 'custom_user', got '%s'", mockDB.ProvisionOpts.DatabaseUser)
+		t.Errorf("expected db user override to 'custom_user', got %q", mockDB.ProvisionOpts.DatabaseUser)
 	}
 	if mockDB.ProvisionOpts.DatabasePassword != "StaticPassword123!" {
 		t.Errorf("expected password override to work")
 	}
+	if mockDB.ProvisionOpts.DatabaseHostname != "override.host" {
+		t.Errorf("expected host override to 'override.host', got %q", mockDB.ProvisionOpts.DatabaseHostname)
+	}
+	if mockDB.ProvisionOpts.DatabasePort != 3307 {
+		t.Errorf("expected port override to 3307, got %d", mockDB.ProvisionOpts.DatabasePort)
+	}
 
-	// Verify Result reflects the request
-	if result.DatabaseName != "custom_db_name" {
+	if result.Options.DatabaseName != "custom_db_name" {
 		t.Errorf("result object mismatch")
+	}
+
+	// MySQL apps must not carry a schema.
+	if result.Options.Schema != "" {
+		t.Errorf("expected empty schema for mysql, got %q", result.Options.Schema)
+	}
+}
+
+func TestProvisioner_Run_RejectsSchemaForMySQL(t *testing.T) {
+	mockDB := &MockDB{}
+	provisioner := newTestProvisioner(mockDB, database.EngineMySQL, config.DatabaseConfig{
+		DatabaseHostname: "127.0.0.1",
+		DatabasePort:     3306,
+	})
+
+	_, err := provisioner.Run(context.Background(), ProvisionRequest{
+		AppName:  "myapp",
+		DBSchema: "not_allowed",
+	})
+	if err == nil {
+		t.Fatal("expected error when passing a schema for mysql")
+	}
+	if mockDB.ProvisionCalled {
+		t.Error("expected DB.Provision NOT to be called when the request is invalid")
+	}
+}
+
+func TestSanitizeAppName(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{"plain", "plain"},
+		{"with-hyphen", "with_hyphen"},
+		{"multi-part-name", "multi_part_name"},
+	}
+	for _, tt := range tests {
+		if got := sanitizeAppName(tt.in); got != tt.want {
+			t.Errorf("sanitizeAppName(%q) = %q, want %q", tt.in, got, tt.want)
+		}
 	}
 }

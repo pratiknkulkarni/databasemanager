@@ -10,6 +10,7 @@ import (
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/praaatik/databasemanager/internal/app"
 	"github.com/praaatik/databasemanager/internal/config"
+	"github.com/praaatik/databasemanager/internal/database"
 	"github.com/spf13/cobra"
 )
 
@@ -36,12 +37,12 @@ func newConnCmd(container *app.Container) *cobra.Command {
 				return fmt.Errorf("--copy requires --format flag. Available formats: uri, psql (postgres), mysql (mysql), env")
 			}
 
-			secretMap, err := fetchAppSecrets(container.Infisical, container.Config, appName, connEnv)
+			creds, err := fetchAppCredentials(container.Infisical, container.Config, appName, connEnv)
 			if err != nil {
 				return err
 			}
 
-			detectedType, err := detectDatabaseType(secretMap)
+			detectedType, err := creds.ResolveType()
 			if err != nil {
 				return err
 			}
@@ -54,24 +55,24 @@ func newConnCmd(container *app.Container) *cobra.Command {
 				}
 				dbType = connType
 			} else if connFormat == "table" {
-				fmt.Printf("Detected database type: %s\n\n", detectedType)
+				container.Logger.Info("Detected database type", "type", detectedType)
 			}
 
 			if err := validateFormatForDatabase(dbType, connFormat); err != nil {
 				return err
 			}
 
-			if err := validateRequiredSecrets(secretMap, dbType); err != nil {
+			if err := creds.ValidateContract(dbType); err != nil {
 				return err
 			}
 
 			generator := &ConnectionStringGenerator{
-				Host:     secretMap["DB_HOST"],
-				Port:     secretMap["DB_PORT"],
-				Database: secretMap["DB_NAME"],
-				User:     secretMap["DB_USER"],
-				Password: secretMap["DB_PASSWORD"],
-				Schema:   secretMap["DB_SCHEMA"],
+				Host:     creds.Host,
+				Port:     creds.Port,
+				Database: creds.Name,
+				User:     creds.User,
+				Password: creds.Password,
+				Schema:   creds.Schema,
 				DBType:   dbType,
 			}
 
@@ -131,12 +132,14 @@ type ConnectionFormat struct {
 
 // Generate creates a connection string in the specified format
 func (g *ConnectionStringGenerator) Generate(format string) (string, error) {
-	if g.DBType == "postgres" {
+	switch g.DBType {
+	case "postgres":
 		return g.GeneratePostgres(format)
-	} else if g.DBType == "mysql" {
+	case "mysql":
 		return g.GenerateMySQL(format)
+	default:
+		return "", fmt.Errorf("unsupported database type: %s", g.DBType)
 	}
-	return "", fmt.Errorf("unsupported database type: %s", g.DBType)
 }
 
 // GeneratePostgres creates PostgreSQL connection strings
@@ -189,35 +192,39 @@ func (g *ConnectionStringGenerator) GenerateMySQL(format string) (string, error)
 
 // GenerateAll generates all available connection string formats for the database type
 func (g *ConnectionStringGenerator) GenerateAll() ([]ConnectionFormat, error) {
-	var formats []ConnectionFormat
+	var specs []struct{ name, format string }
 
-	if g.DBType == "postgres" {
-		uri, _ := g.GeneratePostgres("uri")
-		psql, _ := g.GeneratePostgres("psql")
-		env, _ := g.GeneratePostgres("env")
+	switch g.DBType {
+	case "postgres":
+		specs = []struct{ name, format string }{
+			{"URI", "uri"},
+			{"PSQL Command", "psql"},
+			{"Environment Variable", "env"},
+		}
+	case "mysql":
+		specs = []struct{ name, format string }{
+			{"URI", "uri"},
+			{"MySQL Command", "mysql"},
+			{"Environment Variable", "env"},
+		}
+	default:
+		return nil, fmt.Errorf("unsupported database type: %s", g.DBType)
+	}
 
-		formats = append(formats,
-			ConnectionFormat{Name: "URI", Value: uri},
-			ConnectionFormat{Name: "PSQL Command", Value: psql},
-			ConnectionFormat{Name: "Environment Variable", Value: env},
-		)
-	} else if g.DBType == "mysql" {
-		uri, _ := g.GenerateMySQL("uri")
-		mysql, _ := g.GenerateMySQL("mysql")
-		env, _ := g.GenerateMySQL("env")
-
-		formats = append(formats,
-			ConnectionFormat{Name: "URI", Value: uri},
-			ConnectionFormat{Name: "MySQL Command", Value: mysql},
-			ConnectionFormat{Name: "Environment Variable", Value: env},
-		)
+	formats := make([]ConnectionFormat, 0, len(specs))
+	for _, spec := range specs {
+		value, err := g.Generate(spec.format)
+		if err != nil {
+			return nil, err
+		}
+		formats = append(formats, ConnectionFormat{Name: spec.name, Value: value})
 	}
 
 	return formats, nil
 }
 
-// fetchAppSecrets retrieves secrets from Infisical for the given app
-func fetchAppSecrets(infClient infisical.InfisicalClientInterface, cfg *config.Config, appName, env string) (map[string]string, error) {
+// fetchAppCredentials retrieves an app's recorded credentials from Infisical.
+func fetchAppCredentials(infClient infisical.InfisicalClientInterface, cfg *config.Config, appName, env string) (database.Credentials, error) {
 	secretPath := fmt.Sprintf("/%s", appName)
 
 	secrets, err := infClient.Secrets().List(infisical.ListSecretsOptions{
@@ -227,61 +234,19 @@ func fetchAppSecrets(infClient infisical.InfisicalClientInterface, cfg *config.C
 	})
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch secrets for app %q: %w", appName, err)
+		return database.Credentials{}, fmt.Errorf("failed to fetch secrets for app %q: %w", appName, err)
 	}
 
 	if len(secrets) == 0 {
-		return nil, fmt.Errorf("no secrets found for app %q in environment %q", appName, env)
+		return database.Credentials{}, fmt.Errorf("no secrets found for app %q in environment %q", appName, env)
 	}
 
-	secretMap := make(map[string]string)
+	secretMap := make(map[string]string, len(secrets))
 	for _, s := range secrets {
 		secretMap[s.SecretKey] = s.SecretValue
 	}
 
-	return secretMap, nil
-}
-
-// detectDatabaseType determines database type from DB_TYPE secret
-func detectDatabaseType(secrets map[string]string) (string, error) {
-	dbType, exists := secrets["DB_TYPE"]
-	if !exists {
-		return "", fmt.Errorf("DB_TYPE secret not found. This app may have been provisioned with an older version. Please re-provision the app")
-	}
-
-	if dbType != "postgres" && dbType != "mysql" {
-		return "", fmt.Errorf("invalid DB_TYPE value: %q (must be 'postgres' or 'mysql')", dbType)
-	}
-
-	return dbType, nil
-}
-
-// validateRequiredSecrets checks if all required secrets are present
-func validateRequiredSecrets(secrets map[string]string, dbType string) error {
-	requiredKeys := []string{"DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD"}
-
-	var missing []string
-	for _, key := range requiredKeys {
-		if _, exists := secrets[key]; !exists {
-			missing = append(missing, key)
-		}
-	}
-
-	if len(missing) > 0 {
-		return fmt.Errorf("required secrets not found: %s", strings.Join(missing, ", "))
-	}
-
-	_, hasSchema := secrets["DB_SCHEMA"]
-
-	if dbType == "postgres" && !hasSchema {
-		return fmt.Errorf("DB_SCHEMA not found but DB_TYPE is 'postgres'. This indicates a database compatibility issue")
-	}
-
-	if dbType == "mysql" && hasSchema {
-		return fmt.Errorf("DB_SCHEMA found but DB_TYPE is 'mysql'. This indicates a database compatibility issue")
-	}
-
-	return nil
+	return database.ParseCredentials(secretMap), nil
 }
 
 // validateFormatForDatabase validates that the format is compatible with the database type
@@ -331,9 +296,10 @@ func outputConnectionTable(formats []ConnectionFormat, dbType string) error {
 
 	// adding this help tip in the bottom instead of a warning
 	fmt.Println()
-	if dbType == "postgres" {
+	switch dbType {
+	case "postgres":
 		fmt.Println("Tip: Use --copy --format <uri|psql|env> to copy unmasked value to clipboard")
-	} else if dbType == "mysql" {
+	case "mysql":
 		fmt.Println("Tip: Use --copy --format <uri|mysql|env> to copy unmasked value to clipboard")
 	}
 

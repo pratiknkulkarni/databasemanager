@@ -51,6 +51,13 @@ func Load(cfgFile string) (*Config, error) {
 	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_", ".", "_"))
 	v.AutomaticEnv()
 
+	// AutomaticEnv only overrides keys Viper already knows about; keys absent
+	// from the config file must be bound explicitly to be settable via
+	// DATABASEMANAGER_* environment variables.
+	for _, key := range envBoundKeys() {
+		_ = v.BindEnv(key)
+	}
+
 	if err := v.ReadInConfig(); err != nil {
 		var configFileNotFoundError viper.ConfigFileNotFoundError
 		if !errors.As(err, &configFileNotFoundError) {
@@ -70,6 +77,21 @@ func Load(cfgFile string) (*Config, error) {
 	return &cfg, nil
 }
 
+// Engine returns the configuration section for the named engine and whether
+// the name is one the configuration schema knows about. An unconfigured but
+// known engine returns a zero DatabaseConfig and true; database.New reports
+// the missing section.
+func (c *Config) Engine(name string) (DatabaseConfig, bool) {
+	switch name {
+	case "postgres":
+		return c.Postgres, true
+	case "mysql":
+		return c.MySQL, true
+	default:
+		return DatabaseConfig{}, false
+	}
+}
+
 // Validate ensures all required fields are present.
 func (c *Config) Validate() error {
 	var missing []string
@@ -84,12 +106,11 @@ func (c *Config) Validate() error {
 		missing = append(missing, "infisical_client_secret")
 	}
 
+	// A config with no engine section is valid: list/conn/test only need
+	// Infisical. Commands that need an engine get a clear error from
+	// database.New when that engine's section is absent.
 	postgresSet := c.Postgres.DatabaseHostname != ""
 	mysqlSet := c.MySQL.DatabaseHostname != ""
-
-	//TODO: maybe I throw in an exception here? Panic?
-	if !postgresSet && !mysqlSet {
-	}
 
 	if postgresSet {
 		if err := validateDBConfig("postgres", c.Postgres); err != nil {
@@ -107,6 +128,23 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
+}
+
+// envBoundKeys is the full set of configuration keys; it is the contract for
+// what can be supplied via DATABASEMANAGER_* environment variables.
+func envBoundKeys() []string {
+	keys := []string{
+		"infisical_project_id",
+		"infisical_client_id",
+		"infisical_client_secret",
+		"infisical_site_url",
+	}
+	for _, engine := range []string{"postgres", "mysql"} {
+		for _, field := range []string{"database_hostname", "database_port", "database_user", "database_password", "database_name"} {
+			keys = append(keys, engine+"."+field)
+		}
+	}
+	return keys
 }
 
 func validateDBConfig(engine string, db DatabaseConfig) error {

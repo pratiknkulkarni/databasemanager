@@ -1,8 +1,44 @@
 package config
 
 import (
+	"os"
 	"testing"
 )
+
+// TestLoad_EnvOnly verifies configuration is loadable purely from environment
+// variables, with no config file present (explicit BindEnv keys).
+func TestLoad_EnvOnly(t *testing.T) {
+	t.Setenv("HOME", t.TempDir()) // ensure no real config file is picked up
+	t.Setenv("DATABASEMANAGER_INFISICAL_PROJECT_ID", "proj_env")
+	t.Setenv("DATABASEMANAGER_INFISICAL_CLIENT_ID", "client_env")
+	t.Setenv("DATABASEMANAGER_INFISICAL_CLIENT_SECRET", "secret_env")
+	t.Setenv("DATABASEMANAGER_POSTGRES_DATABASE_HOSTNAME", "envhost")
+	t.Setenv("DATABASEMANAGER_POSTGRES_DATABASE_PORT", "5433")
+	t.Setenv("DATABASEMANAGER_POSTGRES_DATABASE_USER", "envuser")
+	t.Setenv("DATABASEMANAGER_POSTGRES_DATABASE_PASSWORD", "envpass")
+	t.Setenv("DATABASEMANAGER_POSTGRES_DATABASE_NAME", "envdb")
+
+	tmp := t.TempDir()
+	oldWd, _ := os.Getwd()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(oldWd) }()
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load from env failed: %v", err)
+	}
+	if cfg.Postgres.DatabaseHostname != "envhost" {
+		t.Errorf("expected hostname from env, got %q", cfg.Postgres.DatabaseHostname)
+	}
+	if cfg.Postgres.DatabasePort != 5433 {
+		t.Errorf("expected port 5433 from env, got %d", cfg.Postgres.DatabasePort)
+	}
+	if cfg.InfisicalProjectID != "proj_env" {
+		t.Errorf("expected project id from env, got %q", cfg.InfisicalProjectID)
+	}
+}
 
 func TestConfig_Validate(t *testing.T) {
 	type fields struct {

@@ -8,8 +8,10 @@ import (
 	"github.com/praaatik/databasemanager/internal/config"
 )
 
-func NewClient(cfg *config.Config) (infisical.InfisicalClientInterface, error) {
-	client := infisical.NewInfisicalClient(context.Background(), infisical.Config{
+// NewClient constructs an authenticated Infisical client. The context ties the
+// client's background token refresh to the caller's lifecycle.
+func NewClient(ctx context.Context, cfg *config.Config) (infisical.InfisicalClientInterface, error) {
+	client := infisical.NewInfisicalClient(ctx, infisical.Config{
 		SiteUrl:              cfg.InfisicalSiteURL,
 		AutoTokenRefresh:     true,
 		CacheExpiryInSeconds: 0,

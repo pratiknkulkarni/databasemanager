@@ -23,36 +23,19 @@ func newTestCmd(container *app.Container) *cobra.Command {
 				return fmt.Errorf("infisical client not initialized")
 			}
 
-			secretMap, err := fetchAppSecrets(container.Infisical, container.Config, appName, env)
+			creds, err := fetchAppCredentials(container.Infisical, container.Config, appName, env)
 			if err != nil {
 				return fmt.Errorf("failed to fetch secrets: %w", err)
 			}
 
-			dbType, err := detectDatabaseType(secretMap)
+			dbType, err := creds.ResolveType()
 			if err != nil {
 				return err
 			}
 
 			container.Logger.Info("testing connection", "app", appName, "type", dbType, "env", env)
 
-			switch dbType {
-			case "postgres":
-				client, err := database.NewPostgresClient(container.Config)
-				if err != nil {
-					return err
-				}
-				container.DB = client
-			case "mysql":
-				client, err := database.NewMySQLClient(container.Config)
-				if err != nil {
-					return err
-				}
-				container.DB = client
-			default:
-				return fmt.Errorf("unsupported database type in secrets: %s", dbType)
-			}
-
-			if err := container.DB.TestAppConnection(ctx, secretMap); err != nil {
+			if err := database.TestAppConnection(ctx, creds); err != nil {
 				return fmt.Errorf("connection test failed: %w", err)
 			}
 

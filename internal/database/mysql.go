@@ -3,46 +3,42 @@ package database
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
-	"sync"
+	"strings"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/praaatik/databasemanager/internal/config"
 )
 
-// provisionStateMysql keeps track of resources created during provisioning
-type provisionStateMysql struct {
-	databaseCreated bool
-	userCreated     bool
-}
-
 type MySQLClient struct {
-	cfg *config.Config
+	cfg config.DatabaseConfig
 	db  *sql.DB
-	mu  sync.RWMutex
 }
 
-func NewMySQLClient(cfg *config.Config) (*MySQLClient, error) {
-	return &MySQLClient{cfg: cfg}, nil
+func newMySQLClient(cfg config.DatabaseConfig) *MySQLClient {
+	return &MySQLClient{cfg: cfg}
 }
 
-func (m *MySQLClient) Connect(ctx context.Context) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+// escapeMySQLLiteral escapes a value for interpolation into a single-quoted
+// MySQL string literal. Backslashes must be escaped as well as quotes,
+// otherwise a trailing backslash would escape the closing quote.
+func escapeMySQLLiteral(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(s)
+}
 
+// ensureConnection lazily opens the single admin connection (no database
+// selected — provisioning and deletion operate across databases).
+func (m *MySQLClient) ensureConnection(ctx context.Context) error {
 	if m.db != nil {
 		return nil
 	}
 
-	// MySQL DSN format: user:password@tcp(host:port)/database
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true",
-		m.cfg.MySQL.DatabaseUser,
-		m.cfg.MySQL.DatabasePassword,
-		m.cfg.MySQL.DatabaseHostname,
-		m.cfg.MySQL.DatabasePort,
-		m.cfg.MySQL.DatabaseName)
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/?parseTime=true&timeout=10s",
+		m.cfg.DatabaseUser,
+		m.cfg.DatabasePassword,
+		m.cfg.DatabaseHostname,
+		m.cfg.DatabasePort)
 
 	db, err := sql.Open("mysql", dsn)
 	if err != nil {
@@ -58,21 +54,14 @@ func (m *MySQLClient) Connect(ctx context.Context) error {
 	return nil
 }
 
-func (m *MySQLClient) Test(ctx context.Context) error {
-	m.mu.RLock()
-	db := m.db
-	m.mu.RUnlock()
-
-	if db == nil {
-		if err := m.Connect(ctx); err != nil {
-			return fmt.Errorf("failed to establish connection: %w", err)
-		}
-		m.mu.RLock()
-		db = m.db
-		m.mu.RUnlock()
+// Close releases the admin connection pool.
+func (m *MySQLClient) Close() error {
+	if m.db == nil {
+		return nil
 	}
-
-	return db.PingContext(ctx)
+	err := m.db.Close()
+	m.db = nil
+	return err
 }
 
 func (m *MySQLClient) Provision(ctx context.Context, opts ProvisionOptions) (err error) {
@@ -92,7 +81,7 @@ func (m *MySQLClient) Provision(ctx context.Context, opts ProvisionOptions) (err
 		return fmt.Errorf("database %q already exists", opts.DatabaseName)
 	}
 
-	state := &provisionStateMysql{}
+	state := &provisionState{}
 	defer func() {
 		if err != nil {
 			m.rollbackProvision(opts.DatabaseName, opts.DatabaseUser, state)
@@ -130,7 +119,7 @@ func (m *MySQLClient) createDatabase(ctx context.Context, dbName string) error {
 }
 
 func (m *MySQLClient) createUser(ctx context.Context, userName, password string) error {
-	query := fmt.Sprintf("CREATE USER '%s'@'%%' IDENTIFIED BY '%s'", userName, password)
+	query := fmt.Sprintf("CREATE USER '%s'@'%%' IDENTIFIED BY '%s'", userName, escapeMySQLLiteral(password))
 	_, err := m.db.ExecContext(ctx, query)
 	return err
 }
@@ -146,7 +135,9 @@ func (m *MySQLClient) flushPrivileges(ctx context.Context) error {
 	return err
 }
 
-func (m *MySQLClient) rollbackProvision(dbName, userName string, state *provisionStateMysql) {
+// rollbackProvision drops whatever a failed provisioning run created. It uses
+// a fresh context because the request context may already be cancelled.
+func (m *MySQLClient) rollbackProvision(dbName, userName string, state *provisionState) {
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -162,56 +153,42 @@ func (m *MySQLClient) databaseExists(ctx context.Context, name string) (bool, er
 	var dbName string
 	query := "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?"
 	err := m.db.QueryRowContext(ctx, query, name).Scan(&dbName)
-	if errors.Is(err, sql.ErrNoRows) {
+	if err == sql.ErrNoRows {
 		return false, nil
 	}
-	return err == nil, err
-}
-
-func (m *MySQLClient) ensureConnection(ctx context.Context) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.db != nil {
-		return nil
-	}
-	if m.cfg == nil {
-		return errors.New("config missing")
-	}
-
-	// Open admin connection
-	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/?parseTime=true&timeout=10s",
-		m.cfg.MySQL.DatabaseUser,
-		m.cfg.MySQL.DatabasePassword,
-		m.cfg.MySQL.DatabaseHostname,
-		m.cfg.MySQL.DatabasePort)
-
-	db, err := sql.Open("mysql", dsn)
 	if err != nil {
-		return err
+		return false, err
 	}
-	m.db = db
-	return db.PingContext(ctx)
+	return true, nil
 }
 
+// Delete drops the user and database. Every step is checked: a partial
+// deletion must surface, not silently succeed.
 func (m *MySQLClient) Delete(ctx context.Context, databaseName, userName string) error {
 	if err := m.ensureConnection(ctx); err != nil {
 		return err
 	}
 
-	_, _ = m.db.ExecContext(ctx, fmt.Sprintf("DROP USER IF EXISTS '%s'@'%%'", userName))
-	_, _ = m.db.ExecContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", databaseName))
-	_, _ = m.db.ExecContext(ctx, "FLUSH PRIVILEGES")
+	if _, err := m.db.ExecContext(ctx, fmt.Sprintf("DROP USER IF EXISTS '%s'@'%%'", escapeMySQLLiteral(userName))); err != nil {
+		return fmt.Errorf("failed to drop user: %w", err)
+	}
+	if _, err := m.db.ExecContext(ctx, fmt.Sprintf("DROP DATABASE IF EXISTS `%s`", strings.ReplaceAll(databaseName, "`", "``"))); err != nil {
+		return fmt.Errorf("failed to drop database: %w", err)
+	}
+	if _, err := m.db.ExecContext(ctx, "FLUSH PRIVILEGES"); err != nil {
+		return fmt.Errorf("failed to flush privileges: %w", err)
+	}
 	return nil
 }
 
-// TestAppConnection tests if the provisioned credentials actually work.
-func (m *MySQLClient) TestAppConnection(ctx context.Context, credentials map[string]string) error {
+// testMySQLAppConnection dials mysql with provisioned app credentials.
+func testMySQLAppConnection(ctx context.Context, creds Credentials) error {
 	appDSN := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?parseTime=true&timeout=5s",
-		credentials["DB_USER"],
-		credentials["DB_PASSWORD"],
-		credentials["DB_HOST"],
-		credentials["DB_PORT"],
-		credentials["DB_NAME"])
+		creds.User,
+		creds.Password,
+		creds.Host,
+		creds.Port,
+		creds.Name)
 
 	appDB, err := sql.Open("mysql", appDSN)
 	if err != nil {

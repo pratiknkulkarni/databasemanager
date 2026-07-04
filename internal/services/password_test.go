@@ -1,4 +1,4 @@
-package utils
+package services
 
 import (
 	"encoding/hex"
@@ -19,19 +19,19 @@ func TestGenerateRandomPassword(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := GenerateRandomPassword(tt.length)
+			got, err := generateRandomPassword(tt.length)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("GenerateRandomPassword() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("generateRandomPassword() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
 			expectedLen := tt.length * 2
 			if len(got) != expectedLen {
-				t.Errorf("GenerateRandomPassword() length = %d, want %d", len(got), expectedLen)
+				t.Errorf("generateRandomPassword() length = %d, want %d", len(got), expectedLen)
 			}
 
 			if _, err := hex.DecodeString(got); err != nil {
-				t.Errorf("GenerateRandomPassword() returned invalid hex: %v", err)
+				t.Errorf("generateRandomPassword() returned invalid hex: %v", err)
 			}
 		})
 	}

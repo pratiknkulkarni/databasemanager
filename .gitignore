@@ -33,3 +33,7 @@ go.work.sum
 
 *.toml
 *.yaml
+
+# Local configuration holds live Infisical + database credentials — never commit,
+# including backups/copies with suffixes that dodge the *.yaml pattern above.
+.databasemanager.yaml*

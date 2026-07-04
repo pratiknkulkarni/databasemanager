@@ -12,7 +12,7 @@ build:
 
 test:
 	@echo "Running tests..."
-	@go test -v ./internal/...
+	@go test ./...
 	@echo "Tests passed."
 
 clean:
