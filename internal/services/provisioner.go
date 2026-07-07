@@ -81,6 +81,17 @@ func (p *Provisioner) Run(ctx context.Context, req ProvisionRequest) (*Provision
 		return nil, err
 	}
 
+	// Pre-flight the secret store BEFORE touching the database: a wrong
+	// environment slug or an already-recorded app must fail while there is
+	// still nothing to clean up.
+	var existing map[string]string
+	if p.deps.Secrets != nil {
+		existing, err = p.prepareSecretSync(req.AppName, req.Environment)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	p.deps.Logger.Info("provisioning database", "name", opts.DatabaseName, "user", opts.DatabaseUser)
 	if err := p.deps.DB.Provision(ctx, *opts); err != nil {
 		return nil, fmt.Errorf("database provisioning failed: %w", err)
@@ -93,7 +104,9 @@ func (p *Provisioner) Run(ctx context.Context, req ProvisionRequest) (*Provision
 		return result, nil
 	}
 
-	if err := p.syncToInfisical(req, *opts); err != nil {
+	p.deps.Logger.Info("syncing secrets to infisical", "env", req.Environment)
+	plan := planSecretSync(existing, result.Credentials.ToSecrets())
+	if err := p.executeSyncPlan(req.Environment, secretPath(req.AppName), plan); err != nil {
 		p.deps.Logger.Error("database was created but its secrets were not synced", "app", req.AppName, "err", err)
 		// The database exists and the generated password is recorded nowhere
 		// else: return the result alongside the error so the caller can
@@ -103,6 +116,52 @@ func (p *Provisioner) Run(ctx context.Context, req ProvisionRequest) (*Provision
 	result.Synced = true
 
 	return result, nil
+}
+
+// prepareSecretSync verifies the secret store is ready to record the app
+// before any database mutation: the folder exists (fail-closed creation) and
+// the app is not already recorded. It returns the secrets currently stored at
+// the app's path for reconciliation planning.
+func (p *Provisioner) prepareSecretSync(appName, environment string) (map[string]string, error) {
+	if err := p.ensureFolder(appName, environment); err != nil {
+		return nil, err
+	}
+
+	existing, err := p.deps.Secrets.ListSecrets(environment, secretPath(appName))
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect existing secrets for app %q: %w", appName, err)
+	}
+
+	for _, key := range database.ContractKeys() {
+		if _, ok := existing[key]; ok {
+			return nil, fmt.Errorf("app %q already has recorded secrets in environment %q (%s present); delete the app first", appName, environment, key)
+		}
+	}
+
+	return existing, nil
+}
+
+// executeSyncPlan applies a reconciliation plan: creates, then updates, then
+// deletions of stale contract keys — each slice in the contract's
+// deterministic order, so a partial failure names exactly the key that did
+// not land and a re-run picks up where it stopped.
+func (p *Provisioner) executeSyncPlan(environment, path string, plan syncPlan) error {
+	for _, kv := range plan.creates {
+		if err := p.deps.Secrets.CreateSecret(environment, path, kv); err != nil {
+			return fmt.Errorf("failed to create secret %q: %w", kv.Key, err)
+		}
+	}
+	for _, kv := range plan.updates {
+		if err := p.deps.Secrets.UpdateSecret(environment, path, kv); err != nil {
+			return fmt.Errorf("failed to update secret %q: %w", kv.Key, err)
+		}
+	}
+	for _, key := range plan.deletes {
+		if err := p.deps.Secrets.DeleteSecret(environment, path, key); err != nil {
+			return fmt.Errorf("failed to delete stale secret %q: %w", key, err)
+		}
+	}
+	return nil
 }
 
 // sanitizeAppName maps an app name onto the SQL identifier charset.
@@ -177,25 +236,6 @@ func (p *Provisioner) credentials(opts database.ProvisionOptions) database.Crede
 		Password: opts.DatabasePassword,
 		Schema:   opts.Schema,
 	}
-}
-
-// syncToInfisical records the secret contract, one key at a time in the
-// contract's deterministic order, so a partial failure names exactly the key
-// that did not land.
-func (p *Provisioner) syncToInfisical(req ProvisionRequest, opts database.ProvisionOptions) error {
-	p.deps.Logger.Info("syncing secrets to infisical", "env", req.Environment)
-
-	if err := p.ensureFolder(req.AppName, req.Environment); err != nil {
-		return err
-	}
-
-	path := secretPath(req.AppName)
-	for _, kv := range p.credentials(opts).ToSecrets() {
-		if err := p.deps.Secrets.CreateSecret(req.Environment, path, kv); err != nil {
-			return fmt.Errorf("failed to create secret %q: %w", kv.Key, err)
-		}
-	}
-	return nil
 }
 
 // ensureFolder creates the app folder. A creation failure is only tolerated

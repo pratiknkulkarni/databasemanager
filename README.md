@@ -266,21 +266,27 @@ environment.
 2. A 32-hex-character password (16 bytes of `crypto/rand`, 128 bits of entropy) is generated
    unless `--pass` is given. If the OS entropy pool is unreadable, provisioning **fails
    hard** — there is no weak fallback.
-3. The engine checks the database doesn't already exist (parameterized catalog query);
+3. **The secret store is pre-flighted before the database is touched:** the app folder is
+   created (fail-closed), and the app must not already have recorded contract secrets. A
+   wrong `--env` slug, an Infisical outage, or an already-recorded app fails *here*, while
+   there is still nothing to clean up.
+4. The engine checks the database doesn't already exist (parameterized catalog query);
    an existing database is a hard error, nothing is touched.
-4. **Postgres:** `CREATE USER … WITH PASSWORD …` → `CREATE DATABASE … OWNER …`, then a
+5. **Postgres:** `CREATE USER … WITH PASSWORD …` → `CREATE DATABASE … OWNER …`, then a
    hardening pass *inside the new database*: `REVOKE CONNECT … FROM PUBLIC`, re-own the
    `public` schema to the admin, `REVOKE ALL ON SCHEMA public FROM PUBLIC`, then either
    grant the app user `ALL` on `public` or `CREATE SCHEMA <custom> AUTHORIZATION <user>`.
    **MySQL:** `CREATE DATABASE … utf8mb4/utf8mb4_unicode_ci` → `CREATE USER 'u'@'<host>'` →
    `GRANT ALL PRIVILEGES ON db.* TO …` → `FLUSH PRIVILEGES`.
-5. **Any failure rolls back exactly what was created** (state machine drops the DB and/or
+6. **Any failure rolls back exactly what was created** (state machine drops the DB and/or
    user), on a fresh 10-second context so cleanup survives Ctrl-C.
-6. Credentials are written to Infisical. If the Infisical client is unavailable, the
-   run completes with a warning and prints the `KEY=VALUE` credentials to **stdout** —
-   *the only copy of the generated password; capture it.* If the sync fails after the
-   database was created, the error names the orphaned database **and the same
-   credential dump is printed** so the generated password is never lost.
+7. Credentials are written to Infisical as a **computed reconciliation plan** — per-key
+   creates in the contract's deterministic order, so a partial failure names exactly the
+   key that did not land. If the Infisical client is unavailable, the run completes with a
+   warning and prints the `KEY=VALUE` credentials to **stdout** — *the only copy of the
+   generated password; capture it.* If the sync fails after the database was created, the
+   error names the orphaned database **and the same credential dump is printed** so the
+   generated password is never lost.
 
 **Flags:**
 

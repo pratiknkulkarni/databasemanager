@@ -19,6 +19,17 @@ const (
 	SecretKeySchema   = "DB_SCHEMA"
 )
 
+// ContractKeys returns every key of the secret contract, in serialization
+// order. It is the definitive list used to tell contract keys apart from
+// operator-owned extras stored in the same folder — reconciliation may only
+// ever delete keys named here.
+func ContractKeys() []string {
+	return []string{
+		SecretKeyType, SecretKeyName, SecretKeyUser,
+		SecretKeyPassword, SecretKeyHost, SecretKeyPort, SecretKeySchema,
+	}
+}
+
 // Credentials is the set of connection facts recorded per provisioned app.
 type Credentials struct {
 	Type     string // EnginePostgres or EngineMySQL; empty for apps provisioned before DB_TYPE existed
