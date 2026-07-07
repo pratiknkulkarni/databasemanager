@@ -274,10 +274,11 @@ environment.
    `GRANT ALL PRIVILEGES ON db.* TO …` → `FLUSH PRIVILEGES`.
 5. **Any failure rolls back exactly what was created** (state machine drops the DB and/or
    user), on a fresh 10-second context so cleanup survives Ctrl-C.
-6. Credentials are batch-written to Infisical. If the Infisical client is unavailable, the
+6. Credentials are written to Infisical. If the Infisical client is unavailable, the
    run completes with a warning and prints the `KEY=VALUE` credentials to **stdout** —
-   *the only copy of the generated password; capture it.* If the sync fails mid-way, the
-   error names the orphaned database so you can clean it up.
+   *the only copy of the generated password; capture it.* If the sync fails after the
+   database was created, the error names the orphaned database **and the same
+   credential dump is printed** so the generated password is never lost.
 
 **Flags:**
 

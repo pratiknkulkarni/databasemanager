@@ -57,6 +57,11 @@ type ProvisionResult struct {
 }
 
 // Run provisions the database and syncs its credentials to Infisical.
+//
+// When the database is provisioned but the secret sync fails, Run returns a
+// non-nil result TOGETHER with the error: the result carries the only copy of
+// the generated credentials, and the caller must surface them or they are
+// lost (the database exists, but nothing records its password).
 func (p *Provisioner) Run(ctx context.Context, req ProvisionRequest) (*ProvisionResult, error) {
 	p.deps.Logger.Info("starting provisioning", "app", req.AppName, "type", p.deps.Engine)
 
@@ -79,7 +84,10 @@ func (p *Provisioner) Run(ctx context.Context, req ProvisionRequest) (*Provision
 
 	if err := p.syncToInfisical(req, *opts); err != nil {
 		p.deps.Logger.Error("database was created but its secrets were not synced", "app", req.AppName, "err", err)
-		return nil, fmt.Errorf("infisical sync failed: %w", err)
+		// The database exists and the generated password is recorded nowhere
+		// else: return the result alongside the error so the caller can
+		// surface the credentials instead of losing them.
+		return result, fmt.Errorf("infisical sync failed: %w", err)
 	}
 	result.Synced = true
 

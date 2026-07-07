@@ -59,6 +59,14 @@ func newProvisionCmd(container *app.Container) *cobra.Command {
 
 			result, err := provisioner.Run(ctx, req)
 			if err != nil {
+				if result != nil {
+					// The database was created but the sync failed: this
+					// terminal output is the only copy of the generated
+					// credentials — print them or they are lost.
+					container.Logger.Warn("Provisioned but secret sync FAILED — record these credentials now, they are not stored anywhere",
+						"app", appName)
+					printCredentials(result.Credentials)
+				}
 				return err
 			}
 
@@ -74,9 +82,7 @@ func newProvisionCmd(container *app.Container) *cobra.Command {
 			// generated credentials — print them or they are lost.
 			container.Logger.Warn("Provisioned WITHOUT secret sync — record these credentials now, they are not stored anywhere",
 				"app", appName)
-			for _, kv := range result.Credentials.ToSecrets() {
-				fmt.Printf("%s=%s\n", kv.Key, kv.Value)
-			}
+			printCredentials(result.Credentials)
 			return nil
 		},
 	}
@@ -91,4 +97,14 @@ func newProvisionCmd(container *app.Container) *cobra.Command {
 	cmd.Flags().IntVar(&dbPort, "port", 0, "Override recorded database port (default: engine config)")
 
 	return cmd
+}
+
+// printCredentials dumps the secret contract to stdout as KEY=VALUE lines.
+// Used whenever the terminal is the only place the generated credentials
+// exist (offline provisioning, failed sync). stdout is data by convention, so
+// the dump survives piping and redirection.
+func printCredentials(creds database.Credentials) {
+	for _, kv := range creds.ToSecrets() {
+		fmt.Printf("%s=%s\n", kv.Key, kv.Value)
+	}
 }
