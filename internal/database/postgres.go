@@ -4,11 +4,19 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/lib/pq"
 	"github.com/praaatik/databasemanager/internal/config"
 )
+
+// defaultPostgresSSLMode is the transport-security posture used when the
+// configuration does not set one: encryption is required, defeating passive
+// interception, without demanding a verifiable certificate chain.
+const defaultPostgresSSLMode = "require"
 
 type PostgresClient struct {
 	cfg config.DatabaseConfig
@@ -19,14 +27,31 @@ func newPostgresClient(cfg config.DatabaseConfig) *PostgresClient {
 	return &PostgresClient{cfg: cfg}
 }
 
+// sslMode resolves the effective libpq sslmode, defaulting to a secure value.
+func (p *PostgresClient) sslMode() string {
+	if p.cfg.DatabaseSSLMode != "" {
+		return p.cfg.DatabaseSSLMode
+	}
+	return defaultPostgresSSLMode
+}
+
+// quotePostgresDSNValue quotes a value for the libpq keyword/value DSN format.
+// Without this, a value containing a space or an embedded `key=value` pair
+// would be parsed as additional connection parameters — e.g. a password of
+// `x host=evil` would silently redirect the admin dial.
+func quotePostgresDSNValue(v string) string {
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(v) + "'"
+}
+
 // dsn builds the admin DSN, connecting to the given database name.
 func (p *PostgresClient) dsn(dbName string) string {
-	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		p.cfg.DatabaseHostname,
+	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		quotePostgresDSNValue(p.cfg.DatabaseHostname),
 		p.cfg.DatabasePort,
-		p.cfg.DatabaseUser,
-		p.cfg.DatabasePassword,
-		dbName)
+		quotePostgresDSNValue(p.cfg.DatabaseUser),
+		quotePostgresDSNValue(p.cfg.DatabasePassword),
+		quotePostgresDSNValue(dbName),
+		quotePostgresDSNValue(p.sslMode()))
 }
 
 func (p *PostgresClient) ensureConnection(ctx context.Context) error {
@@ -178,6 +203,16 @@ func (p *PostgresClient) lockdownDatabase(ctx context.Context, opts ProvisionOpt
 }
 
 func (p *PostgresClient) Delete(ctx context.Context, databaseName, userName string) error {
+	// The names arrive from Infisical, not from the validated provision path,
+	// so re-apply the identifier allowlist before they reach any SQL. Quoting
+	// alone is not the only line of defence.
+	if err := validateIdentifier("database name", databaseName, maxIdentifierLen); err != nil {
+		return err
+	}
+	if err := validateIdentifier("database user", userName, maxUserLen); err != nil {
+		return err
+	}
+
 	if err := p.ensureConnection(ctx); err != nil {
 		return err
 	}
@@ -203,11 +238,25 @@ func (p *PostgresClient) Delete(ctx context.Context, databaseName, userName stri
 }
 
 // testPostgresAppConnection dials postgres with provisioned app credentials.
-func testPostgresAppConnection(ctx context.Context, creds Credentials) error {
-	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
-		creds.User, creds.Password, creds.Host, creds.Port, creds.Name)
+// Credentials are carried through url.URL so a password containing '@', '/',
+// '?' or '&' cannot break out of the userinfo and smuggle connection
+// parameters. sslMode defaults to a secure value when unset.
+func testPostgresAppConnection(ctx context.Context, creds Credentials, sslMode string) error {
+	if sslMode == "" {
+		sslMode = defaultPostgresSSLMode
+	}
 
-	appDB, err := sql.Open("postgres", dsn)
+	u := url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(creds.User, creds.Password),
+		Host:   net.JoinHostPort(creds.Host, creds.Port),
+		Path:   "/" + creds.Name,
+	}
+	q := url.Values{}
+	q.Set("sslmode", sslMode)
+	u.RawQuery = q.Encode()
+
+	appDB, err := sql.Open("postgres", u.String())
 	if err != nil {
 		return fmt.Errorf("failed to create connection: %w", err)
 	}

@@ -30,6 +30,7 @@ func newProvisionCmd(container *app.Container) *cobra.Command {
 			ctx := cmd.Context()
 
 			engineCfg, _ := container.Config.Engine(dbType)
+			warnInsecureTLS(container, dbType, engineCfg)
 			db, err := database.New(dbType, engineCfg)
 			if err != nil {
 				return err

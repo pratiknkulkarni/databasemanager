@@ -82,16 +82,19 @@ type Database interface {
 
 // TestAppConnection dials the database described by creds using the
 // provisioned application credentials (not the admin connection) and pings it.
-func TestAppConnection(ctx context.Context, creds Credentials) error {
+// sslMode selects the transport-security posture (empty means the engine's
+// secure default); it is sourced from the engine's configuration section so an
+// operator can relax it for local development without editing code.
+func TestAppConnection(ctx context.Context, creds Credentials, sslMode string) error {
 	if err := creds.requireCore(); err != nil {
 		return err
 	}
 
 	switch creds.Type {
 	case EnginePostgres:
-		return testPostgresAppConnection(ctx, creds)
+		return testPostgresAppConnection(ctx, creds, sslMode)
 	case EngineMySQL:
-		return testMySQLAppConnection(ctx, creds)
+		return testMySQLAppConnection(ctx, creds, sslMode)
 	default:
 		return fmt.Errorf("unsupported database type: %s (supported: %s)", creds.Type, strings.Join(Engines(), ", "))
 	}

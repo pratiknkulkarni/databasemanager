@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/log"
@@ -237,13 +238,20 @@ func outputSecretJSON(secret *models.Secret, showValues bool) error {
 	return nil
 }
 
+// credentialURIPattern matches the `user:password@` userinfo of a connection
+// URI so an embedded password can be masked even when the secret's key looks
+// innocuous (e.g. DB_URI, DSN).
+var credentialURIPattern = regexp.MustCompile(`(://[^:/@\s]+:)([^@/\s]+)(@)`)
+
 func maskSecretValue(key, value string) string {
-	sensitiveKeywords := []string{"PASSWORD", "KEY", "SECRET", "TOKEN"}
+	sensitiveKeywords := []string{"PASSWORD", "PASSWD", "PWD", "KEY", "SECRET", "TOKEN", "CREDENTIAL"}
 	keyUpper := strings.ToUpper(key)
 	for _, keyword := range sensitiveKeywords {
 		if strings.Contains(keyUpper, keyword) {
 			return "*****"
 		}
 	}
-	return value
+	// Even under a non-sensitive key, a value carrying `scheme://user:pass@host`
+	// leaks a password in cleartext — mask just the password portion.
+	return credentialURIPattern.ReplaceAllString(value, "${1}*****${3}")
 }

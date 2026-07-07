@@ -1,5 +1,7 @@
 # Ecosystem Constraints
 
+> IMPORTANT -> After the audit is done, share all the findings in a markdown file with details of the findings, resolution details in a nutshell with relevant file names.
+
 ## Package Boundary Integrity
 - **Reject generic catch-alls:** `common`, `util`, `base`, `models`, etc. packages are forbidden. They accumulate unrelated code, obscure ownership, and become fragile dependency hubs.
 - **Domain-driven packaging:** Packages must reflect business domains or bounded contexts, not technical layers. A `user` package is fine; a shared `models` package spanning domains is not.

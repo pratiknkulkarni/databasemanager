@@ -61,7 +61,7 @@ func TestTestAppConnection_RejectsBadInput(t *testing.T) {
 	}
 
 	t.Run("unsupported type", func(t *testing.T) {
-		err := TestAppConnection(context.Background(), fullCreds)
+		err := TestAppConnection(context.Background(), fullCreds, "")
 		want := "unsupported database type: oracle (supported: mysql, postgres)"
 		if err == nil || err.Error() != want {
 			t.Errorf("expected %q, got %v", want, err)
@@ -69,7 +69,7 @@ func TestTestAppConnection_RejectsBadInput(t *testing.T) {
 	})
 
 	t.Run("missing core fields", func(t *testing.T) {
-		err := TestAppConnection(context.Background(), Credentials{Type: EnginePostgres})
+		err := TestAppConnection(context.Background(), Credentials{Type: EnginePostgres}, "")
 		if err == nil || !strings.Contains(err.Error(), "required secrets not found") {
 			t.Errorf("expected missing-secrets error, got %v", err)
 		}

@@ -4,6 +4,11 @@
 defect register (§10) produced by the architecture audit of commit `d60754c`. Every register
 entry carries its outcome; the handful of deliberate behavior changes are listed in §12.
 
+A subsequent **security-hardening pass (2026-07-05)** closed the findings of an offensive
+audit — transport encryption, delete-path input validation, injection-safe DSN/URI
+construction, and reliable secret masking. Those changes are recorded in §13, with their
+config, invariant, and behavior impacts folded into §6.4, §7, §8, §11, and §12.
+
 ---
 
 ## 1. System Overview
@@ -158,6 +163,19 @@ engine section that sets a hostname; a config with **no** engine section is vali
 (`list`/`conn`/`test` only need Infisical) — commands that need an engine get the error
 from `database.New`.
 
+Each engine section also accepts two **optional** keys (absent ⇒ secure defaults, so they
+are never required by `Validate`):
+
+- `database_sslmode` — transport encryption for that engine's admin/app dials. Empty ⇒
+  secure default (`require` for Postgres, `skip-verify` for MySQL). Postgres takes libpq
+  values (`disable|require|verify-ca|verify-full`); MySQL maps them onto the driver's `tls`
+  values. `disable` is an explicit opt-out and is logged as a warning on every dial.
+- `database_user_host` (MySQL only) — the host part of the account MySQL provisions
+  (`'user'@'<host>'`). Empty ⇒ `%` (any host). Set e.g. `10.0.%` to stop provisioned
+  accounts being reachable network-wide. Keep it stable: `delete` drops
+  `'user'@'<configured host>'`, so a later change can orphan an account created under the
+  old host.
+
 ## 7. Engine Adapter Semantics (converged)
 
 | Concern | PostgresClient | MySQLClient |
@@ -166,9 +184,11 @@ from `database.New`.
 | Provision rollback | state machine, fresh 10s context | state machine, fresh 10s context |
 | Delete error policy | fail-closed, every step checked | fail-closed, every step checked |
 | Hardening | REVOKE PUBLIC connect (checked), reown `public`, grant/create schema | GRANT ALL scoped to the one database |
-| Admin dial | one path (`ensureConnection` + `dsn()`), configured db, `sslmode=disable` | one path, no db selected, 10s timeout |
-| Quoting | `pq.QuoteIdentifier` + `pq.QuoteLiteral` (password, kill-query db name) | backtick-doubling for identifiers, `escapeMySQLLiteral` (backslash+quote) for literals |
-| Identifier gate | `ProvisionOptions.Validate()`: `^[A-Za-z_][A-Za-z0-9_]*$`, ≤63 chars (≤32 for users), non-empty password — enforced before any SQL is built | same (shared) |
+| Admin dial | one path (`ensureConnection` + `dsn()`), configured db; every DSN value libpq-quoted; `sslmode` defaults to `require` | one path (`adminDSN()` via driver `mysql.Config.FormatDSN`), no db selected, 10s timeout; `tls` defaults to `skip-verify` |
+| Transport TLS | `sslmode` from `database_sslmode` (default `require`); `disable` opt-in only, and logged as a warning | `database_sslmode` mapped onto driver `tls` (default `skip-verify`); `disable`→`false`, opt-in only + warning |
+| Quoting | `pq.QuoteIdentifier` + `pq.QuoteLiteral` (password, kill-query db name); DSN values via `quotePostgresDSNValue` | `quoteMySQLIdentifier` (backtick-doubling) for identifiers, `escapeLiteral` for literals — **SQL-mode-aware**: doubles quotes under `NO_BACKSLASH_ESCAPES`, backslash-escapes otherwise (mode read from `@@session.sql_mode` at connect) |
+| Identifier gate | `ProvisionOptions.Validate()`: `^[A-Za-z_][A-Za-z0-9_]*$`, ≤63 chars (≤32 for users), non-empty password — enforced before any SQL is built. **`Delete` re-applies the same gate** to the Infisical-sourced db/user names before any SQL or dial | same (shared) |
+| Provisioned user host | n/a (Postgres roles are not host-scoped) | `'user'@'<host>'` where host is `database_user_host` (default `%`); scope it for network isolation |
 
 The `Database` interface is exactly what consumers call: `Provision`, `Delete`, `Close`.
 App-credential connectivity testing is the free function `database.TestAppConnection`.
@@ -179,8 +199,14 @@ App-credential connectivity testing is the free function `database.TestAppConnec
 - **stdout is data only**: tables, JSON, connection strings, and the offline-provision
   credential dump. All status/"Fetching…" chrome goes through the logger, so
   `--format json` pipes cleanly.
-- Masking policy is in `cmd`: key-substring masking for `list`
-  (`PASSWORD|KEY|SECRET|TOKEN`), full/middle password masking for `conn` output.
+- Masking policy is in `cmd`:
+  - `list`: key-substring masking (`PASSWORD|PASSWD|PWD|KEY|SECRET|TOKEN|CREDENTIAL`) **plus**
+    value-based masking of any `scheme://user:pass@host` userinfo, so a password embedded in
+    an innocuously-keyed secret (e.g. `DB_URI`, `DSN`) is not printed in the clear.
+  - `conn`: masking is done by **regenerating** the connection string with a marker password
+    (`*****`) rather than pattern-matching the finished string — the real password lands
+    nowhere in the output regardless of its characters or URI encoding. The clipboard-copy
+    preview regenerates with a middle-masked password (`su***23`) the same way.
 
 ## 9. Testing
 
@@ -253,10 +279,20 @@ All 32 entries executed 2026-07-04. Line references are to the post-refactor tre
 6. One composition root; flags are read only through Cobra after parse.
 7. Both engine adapters honor the same Provision guarantee (validate → existence check →
    rollback on failure) and fail-closed Delete.
-8. Every SQL identifier passes `ProvisionOptions.Validate`; every literal goes through the
-   engine's quoting/escaping helper. No raw interpolation.
+8. Every SQL identifier passes `validateIdentifier` — on **both** the provision path
+   (`ProvisionOptions.Validate`) and the delete path (names read back from Infisical are
+   re-validated before any SQL or dial). Every literal goes through the engine's
+   quoting/escaping helper (MySQL's is SQL-mode-aware). No raw interpolation.
 9. stdout is data; stderr (logger) is chrome.
 10. `make test` covers `./...`; behavior-bearing pure functions keep their pin tests.
+11. Transport encryption is on by default. No admin or app dial runs in cleartext unless an
+    engine section explicitly sets `database_sslmode: disable`, which is warned about.
+12. Every value interpolated into a DSN or a credential URI is quoted/percent-encoded
+    (`quotePostgresDSNValue`, driver `mysql.Config.FormatDSN`, `url.URL`/`url.UserPassword`),
+    so a config or secret value cannot smuggle extra connection parameters. Shell command
+    formats (`psql`, `mysql`) shell-quote their values.
+13. Rendered secrets are masked by construction (regenerate-with-marker for `conn`,
+    key + userinfo masking for `list`), never by best-effort pattern matching.
 
 ## 12. Deliberate Behavior Changes (vs `d60754c`)
 
@@ -276,3 +312,40 @@ These are the intentional deltas, all traceable to register entries:
 - `conn --format table` prints "Detected database type" via the logger (stderr), not
   stdout; `list`'s status lines likewise (D22).
 - Interrupts (Ctrl-C / SIGTERM) now cancel in-flight work (D8).
+
+Security-hardening deltas (2026-07-05, detailed in §13):
+
+- Admin and app dials require TLS by default (`sslmode=require` / `tls=skip-verify`).
+  Previously every connection ran with `sslmode=disable` / no TLS. Servers without TLS now
+  need an explicit `database_sslmode: disable` (which logs a warning). `test` sources this
+  from the engine config section.
+- `delete` now rejects a stored `DB_NAME`/`DB_USER` that is not a valid identifier before
+  dialling, instead of relying on quoting alone.
+- MySQL literal escaping now follows the server's `sql_mode` (`NO_BACKSLASH_ESCAPES`-safe).
+- Generated connection strings percent-encode credentials (URIs) and shell-quote values
+  (`psql`/`mysql` commands); output that previously broke or leaked on special characters
+  now round-trips.
+- `list` masks passwords embedded in connection-URI values, not just by key name.
+
+## 13. Security-Hardening Register — outcomes (2026-07-05)
+
+Findings from an offensive audit of the post-refactor tree. The threat model is that the CLI
+operator already holds DB-admin and Infisical credentials, so the real trust boundaries are
+the **network**, **git history**, and **Infisical-as-input on `delete`** — not the operator's
+own flags. Git-history credential exposure (audit CRITICAL-1 / register D26) is handled out of
+band by repo migration + rotation and is not a code change.
+
+| ID | Finding | Threat | Outcome |
+|---|---|---|---|
+| S1 | Every dial used `sslmode=disable` / no MySQL TLS | Passive network interception of the admin password and every provisioned app password | **Fixed** — `database_sslmode` per engine, secure default (`require` / `skip-verify`); `disable` is explicit and warned. Postgres `dsn()`/`testPostgresAppConnection`, MySQL `adminDSN()`/`testMySQLAppConnection`; `test` passes the engine's mode through `TestAppConnection(ctx, creds, sslMode)` |
+| S2 | `escapeMySQLLiteral` escaped `'`→`\'`, unsafe under `NO_BACKSLASH_ESCAPES` | An attacker with Infisical write (no DB access) could inject admin SQL via a crafted `DB_USER` on `delete`, or via `--pass` | **Fixed two ways** — (a) `Delete` now runs the identifier allowlist on both names before any SQL/dial (`postgres.go`, `mysql.go`); (b) MySQL escaping is SQL-mode-aware via `MySQLClient.escapeLiteral`, mode read once from `@@session.sql_mode` in `ensureConnection` |
+| S3 | Postgres admin DSN built with raw `fmt.Sprintf` keyword/value pairs | A config/env value with a space or embedded `key=value` (e.g. a password `x host=evil`) could redirect the admin dial | **Fixed** — every DSN value passes `quotePostgresDSNValue` (libpq single-quote escaping); pinned by `TestPostgresDSN_QuotesValuesAndDefaultsSecure` |
+| S4 | App/URI DSNs interpolated credentials without encoding | A password containing `@`, `/`, `?`, `&` broke or smuggled parameters into the connection URI | **Fixed** — app dials and `conn` URIs are built with `url.URL`/`url.UserPassword`; MySQL DSNs via the driver's `mysql.Config.FormatDSN`; pinned by `TestGenerate_SpecialCharPasswordIsEncoded` |
+| S5 | MySQL provisioned `'user'@'%'` with no way to scope host | Any provisioned password is usable from anywhere on the network (compounds S1) | **Fixed** — `database_user_host` scopes the account; default preserves `%` for compatibility. Applied in create/grant/rollback/delete |
+| S6 | `conn` masking regex leaked password tails on `@`/space; `psql` format shell-unsafe | Partial password disclosure in "masked" output; shell execution risk when pasting the `psql`/`mysql` line | **Fixed** — masking is now regenerate-with-marker (`maskedAll`, `previewString`); command formats `shellQuote` their values; pinned by `TestMaskByRegeneration`, `TestShellQuote`, `TestGeneratePSQL_ShellSafe` |
+| S7 | `list` masked only by key substring | A password inside an innocuously-keyed secret value (`DB_URI`, `DSN`) printed in cleartext | **Fixed** — `maskSecretValue` adds userinfo masking of `://user:pass@` and more keywords; pinned by `TestMaskSecretValue` |
+
+Coverage note: the SQL-execution and live-dial paths still require a real server and remain
+verified by smoke test. The new unit tests exercise everything reachable without one — the
+delete-path identifier gate (before the dial), DSN/URI construction, escaping mode logic, TLS
+mapping, and all masking.

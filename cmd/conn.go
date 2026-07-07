@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -77,7 +79,10 @@ func newConnCmd(container *app.Container) *cobra.Command {
 			}
 
 			if connFormat == "table" {
-				formats, err := generator.GenerateAll()
+				// Mask by regenerating with a marker password rather than
+				// pattern-matching the output — the real password lands nowhere,
+				// regardless of its characters or encoding.
+				formats, err := generator.maskedAll()
 				if err != nil {
 					return err
 				}
@@ -95,7 +100,7 @@ func newConnCmd(container *app.Container) *cobra.Command {
 					fmt.Println(connString)
 					return nil
 				}
-				preview := maskPasswordMiddle(connString)
+				preview := generator.previewString(connFormat)
 				container.Logger.Info("Copied to clipboard", "format", strings.ToUpper(connFormat), "preview", preview)
 				return nil
 			}
@@ -142,28 +147,39 @@ func (g *ConnectionStringGenerator) Generate(format string) (string, error) {
 	}
 }
 
+// uri builds a credential-carrying URI with correct percent-encoding, so a
+// password containing '@', '/', '?' or '&' cannot break out of the userinfo
+// and smuggle host or query parameters into the string.
+func (g *ConnectionStringGenerator) uri(scheme string) string {
+	u := url.URL{
+		Scheme: scheme,
+		User:   url.UserPassword(g.User, g.Password),
+		Host:   net.JoinHostPort(g.Host, g.Port),
+		Path:   "/" + g.Database,
+	}
+	if g.Schema != "" {
+		q := url.Values{}
+		q.Set("search_path", g.Schema)
+		u.RawQuery = q.Encode()
+	}
+	return u.String()
+}
+
 // GeneratePostgres creates PostgreSQL connection strings
 func (g *ConnectionStringGenerator) GeneratePostgres(format string) (string, error) {
 	switch format {
 	case "uri":
-		if g.Schema != "" {
-			return fmt.Sprintf("postgresql://%s:%s@%s:%s/%s?search_path=%s",
-				g.User, g.Password, g.Host, g.Port, g.Database, g.Schema), nil
-		}
-		return fmt.Sprintf("postgresql://%s:%s@%s:%s/%s",
-			g.User, g.Password, g.Host, g.Port, g.Database), nil
+		return g.uri("postgresql"), nil
 
 	case "psql":
+		// Values are shell-quoted so a password with shell metacharacters is
+		// neither executed nor broken across arguments when pasted.
 		return fmt.Sprintf("PGPASSWORD=%s psql -h %s -p %s -d %s -U %s",
-			g.Password, g.Host, g.Port, g.Database, g.User), nil
+			shellQuote(g.Password), shellQuote(g.Host), shellQuote(g.Port),
+			shellQuote(g.Database), shellQuote(g.User)), nil
 
 	case "env":
-		if g.Schema != "" {
-			return fmt.Sprintf("DATABASE_URL=postgresql://%s:%s@%s:%s/%s?search_path=%s",
-				g.User, g.Password, g.Host, g.Port, g.Database, g.Schema), nil
-		}
-		return fmt.Sprintf("DATABASE_URL=postgresql://%s:%s@%s:%s/%s",
-			g.User, g.Password, g.Host, g.Port, g.Database), nil
+		return "DATABASE_URL=" + g.uri("postgresql"), nil
 
 	default:
 		return "", fmt.Errorf("unsupported format for postgres: %s", format)
@@ -174,16 +190,15 @@ func (g *ConnectionStringGenerator) GeneratePostgres(format string) (string, err
 func (g *ConnectionStringGenerator) GenerateMySQL(format string) (string, error) {
 	switch format {
 	case "uri":
-		return fmt.Sprintf("mysql://%s:%s@%s:%s/%s",
-			g.User, g.Password, g.Host, g.Port, g.Database), nil
+		return g.uri("mysql"), nil
 
 	case "mysql":
 		return fmt.Sprintf("mysql -h %s -P %s -D %s -u %s -p%s",
-			g.Host, g.Port, g.Database, g.User, g.Password), nil
+			shellQuote(g.Host), shellQuote(g.Port), shellQuote(g.Database),
+			shellQuote(g.User), shellQuote(g.Password)), nil
 
 	case "env":
-		return fmt.Sprintf("DATABASE_URL=mysql://%s:%s@%s:%s/%s",
-			g.User, g.Password, g.Host, g.Port, g.Database), nil
+		return "DATABASE_URL=" + g.uri("mysql"), nil
 
 	default:
 		return "", fmt.Errorf("unsupported format for mysql: %s", format)
@@ -282,14 +297,14 @@ func validateFormatForDatabase(dbType, format string) error {
 	return nil
 }
 
-// outputConnectionTable displays connection strings in table format
+// outputConnectionTable displays connection strings in table format. The
+// values arrive already password-masked (see the table branch in RunE).
 func outputConnectionTable(formats []ConnectionFormat, dbType string) error {
 	t := table.NewWriter()
 	t.AppendHeader(table.Row{"Format", "Connection String"})
 
 	for _, format := range formats {
-		value := maskPassword(format.Value)
-		t.AppendRow(table.Row{format.Name, value})
+		t.AppendRow(table.Row{format.Name, format.Value})
 	}
 
 	fmt.Println(t.Render())
@@ -306,61 +321,62 @@ func outputConnectionTable(formats []ConnectionFormat, dbType string) error {
 	return nil
 }
 
-// maskPassword masks the password in connection strings completely
-func maskPassword(connString string) string {
-	rePG := regexp.MustCompile(`(PGPASSWORD=)([^\s]+)`)
-	connString = rePG.ReplaceAllString(connString, "${1}*****")
+// shellSafePattern matches values that need no shell quoting: no whitespace, no
+// metacharacters. Anything else is single-quoted so it cannot be split into
+// arguments or interpreted by the shell when a command string is pasted.
+var shellSafePattern = regexp.MustCompile(`^[A-Za-z0-9_@%+=:,./-]+$`)
 
-	reMySQL := regexp.MustCompile(`(-p)([^\s]+)`)
-	connString = reMySQL.ReplaceAllString(connString, "${1}*****")
-
-	re := regexp.MustCompile(`(://[^:]+:)([^@]+)(@)`)
-	connString = re.ReplaceAllString(connString, "${1}*****${3}")
-
-	return connString
+// shellQuote renders a value safe to paste into a POSIX shell command.
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	if shellSafePattern.MatchString(s) {
+		return s
+	}
+	// Close the quote, emit an escaped literal quote, reopen: '\'' .
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// maskPasswordMiddle masks middle characters of password for preview
-func maskPasswordMiddle(connString string) string {
-	// PGPASSWORD=
-	rePG := regexp.MustCompile(`(PGPASSWORD=)([^\s]+)`)
-	connString = rePG.ReplaceAllStringFunc(connString, func(match string) string {
-		parts := rePG.FindStringSubmatch(match)
-		if len(parts) == 3 {
-			password := parts[2]
-			masked := maskPasswordString(password)
-			return parts[1] + masked
-		}
-		return match
-	})
+// passwordMask fully hides a password in rendered output.
+const passwordMask = "*****"
 
-	// -p<password> NO SPACE between p and password!
-	reMySQL := regexp.MustCompile(`(-p)([^\s]+)`)
-	connString = reMySQL.ReplaceAllStringFunc(connString, func(match string) string {
-		parts := reMySQL.FindStringSubmatch(match)
-		if len(parts) == 3 {
-			password := parts[2]
-			masked := maskPasswordString(password)
-			return parts[1] + masked
-		}
-		return match
-	})
-
-	re := regexp.MustCompile(`(://[^:]+:)([^@]+)(@)`)
-	connString = re.ReplaceAllStringFunc(connString, func(match string) string {
-		parts := re.FindStringSubmatch(match)
-		if len(parts) == 4 {
-			password := parts[2]
-			masked := maskPasswordString(password)
-			return parts[1] + masked + parts[3]
-		}
-		return match
-	})
-
-	return connString
+// restoreMaskGlyphs undoes the URI userinfo percent-encoding of the '*'
+// characters in a mask marker, so masked output reads as "*****" rather than
+// "%2A%2A%2A%2A%2A". It runs only on already-masked strings, where any '*'
+// present is a mask glyph.
+func restoreMaskGlyphs(s string) string {
+	return strings.ReplaceAll(s, "%2A", "*")
 }
 
-// maskPasswordString should mask the password except for the first two characters and last two characters.
+// maskedAll returns every format with the password masked.
+func (g *ConnectionStringGenerator) maskedAll() ([]ConnectionFormat, error) {
+	mg := *g
+	mg.Password = passwordMask
+	formats, err := mg.GenerateAll()
+	if err != nil {
+		return nil, err
+	}
+	for i := range formats {
+		formats[i].Value = restoreMaskGlyphs(formats[i].Value)
+	}
+	return formats, nil
+}
+
+// previewString renders a format with the password middle-masked, for a
+// clipboard-copy confirmation. Best-effort: never fails the copy.
+func (g *ConnectionStringGenerator) previewString(format string) string {
+	pg := *g
+	pg.Password = maskPasswordString(g.Password)
+	s, err := pg.Generate(format)
+	if err != nil {
+		return "(preview unavailable)"
+	}
+	return restoreMaskGlyphs(s)
+}
+
+// maskPasswordString masks a password except for its first and last two
+// characters. Short passwords are fully masked.
 func maskPasswordString(password string) string {
 	if len(password) <= 4 {
 		return "***"

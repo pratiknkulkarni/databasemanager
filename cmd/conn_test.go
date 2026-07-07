@@ -150,67 +150,90 @@ func TestGenerateAll(t *testing.T) {
 	}
 }
 
-func TestMaskPassword(t *testing.T) {
-	tests := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{
-			name: "uri password",
-			in:   "postgresql://user:supersecret123@host:5432/db",
-			want: "postgresql://user:*****@host:5432/db",
-		},
-		{
-			name: "psql command",
-			in:   "PGPASSWORD=supersecret123 psql -h host -p 5432 -d db -U user",
-			want: "PGPASSWORD=***** psql -h host -p 5432 -d db -U user",
-		},
-		{
-			name: "mysql command inline -p",
-			in:   "mysql -h host -P 3306 -D db -u user -psupersecret123",
-			want: "mysql -h host -P 3306 -D db -u user -p*****",
-		},
+// TestGenerate_SpecialCharPasswordIsEncoded proves a password containing URI
+// metacharacters cannot break out of the userinfo and smuggle host/query
+// parameters — it is percent-encoded, so the host and database are unchanged.
+func TestGenerate_SpecialCharPasswordIsEncoded(t *testing.T) {
+	g := &ConnectionStringGenerator{
+		Host: "db.example.com", Port: "5432", Database: "app_db",
+		User: "app_user", Password: "p@ss/w?rd&x", DBType: "postgres",
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := maskPassword(tt.in); got != tt.want {
-				t.Errorf("maskPassword(%q) = %q, want %q", tt.in, got, tt.want)
-			}
-		})
+	got, err := g.GeneratePostgres("uri")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// A naive fmt.Sprintf would yield ...:p@ss/w?rd&x@db.example.com... where the
+	// first '@' ends the userinfo at "p" and "ss/w?rd&x" corrupts host/query.
+	want := "postgresql://app_user:p%40ss%2Fw%3Frd&x@db.example.com:5432/app_db"
+	if got != want {
+		t.Errorf("GeneratePostgres(uri) = %q, want %q", got, want)
+	}
+	if !strings.Contains(got, "@db.example.com:5432/app_db") {
+		t.Errorf("host/database were corrupted by the password: %q", got)
 	}
 }
 
-func TestMaskPasswordMiddle(t *testing.T) {
+func TestShellQuote(t *testing.T) {
 	tests := []struct {
-		name string
 		in   string
 		want string
 	}{
-		{
-			name: "uri password keeps edges",
-			in:   "postgresql://user:supersecret123@host:5432/db",
-			want: "postgresql://user:su***23@host:5432/db",
-		},
-		{
-			name: "pgpassword keeps edges",
-			in:   "PGPASSWORD=supersecret123 psql -h host -p 5432 -d db -U user",
-			want: "PGPASSWORD=su***23 psql -h host -p 5432 -d db -U user",
-		},
-		{
-			name: "mysql inline -p keeps edges",
-			in:   "mysql -h host -P 3306 -D db -u user -psupersecret123",
-			want: "mysql -h host -P 3306 -D db -u user -psu***23",
-		},
+		{"supersecret123", "supersecret123"},
+		{"db.example.com", "db.example.com"},
+		{"", "''"},
+		{"pa ss", "'pa ss'"},
+		{"a;rm -rf /", "'a;rm -rf /'"},
+		{"it's", `'it'\''s'`},
+		{"$(whoami)", "'$(whoami)'"},
+	}
+	for _, tt := range tests {
+		if got := shellQuote(tt.in); got != tt.want {
+			t.Errorf("shellQuote(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+// TestGeneratePSQL_ShellSafe proves a password with shell metacharacters is
+// quoted so it cannot execute when the psql line is pasted.
+func TestGeneratePSQL_ShellSafe(t *testing.T) {
+	g := &ConnectionStringGenerator{
+		Host: "h", Port: "5432", Database: "db", User: "u",
+		Password: "a;rm -rf /", DBType: "postgres",
+	}
+	got, err := g.GeneratePostgres("psql")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "PGPASSWORD='a;rm -rf /' psql -h h -p 5432 -d db -U u"
+	if got != want {
+		t.Errorf("GeneratePostgres(psql) = %q, want %q", got, want)
+	}
+}
+
+// TestMaskByRegeneration proves that masking (used for table + clipboard
+// preview) hides the password reliably even when it contains characters the old
+// regex maskers would have leaked, and renders a clean "*****" marker.
+func TestMaskByRegeneration(t *testing.T) {
+	g := &ConnectionStringGenerator{
+		Host: "h", Port: "5432", Database: "db", User: "u",
+		Password: "p@ss word", DBType: "postgres",
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := maskPasswordMiddle(tt.in); got != tt.want {
-				t.Errorf("maskPasswordMiddle(%q) = %q, want %q", tt.in, got, tt.want)
-			}
-		})
+	all, err := g.maskedAll()
+	if err != nil {
+		t.Fatalf("maskedAll error: %v", err)
+	}
+	var uri string
+	for _, f := range all {
+		if strings.Contains(f.Value, "ss") || strings.Contains(f.Value, "word") || strings.Contains(f.Value, "%20") {
+			t.Errorf("maskedAll leaked password in %s: %q", f.Name, f.Value)
+		}
+		if f.Name == "URI" {
+			uri = f.Value
+		}
+	}
+	if uri != "postgresql://u:*****@h:5432/db" {
+		t.Errorf("masked URI = %q, want clean *****", uri)
 	}
 }
 
@@ -233,14 +256,20 @@ func TestMaskSecretValue(t *testing.T) {
 		{"API_KEY", "abc", "*****"},
 		{"CLIENT_SECRET", "abc", "*****"},
 		{"AUTH_TOKEN", "abc", "*****"},
+		{"DB_PWD", "abc", "*****"},          // additional sensitive keyword
+		{"DB_CREDENTIAL", "abc", "*****"},   //
 		{"db_password", "hunter2", "*****"}, // case-insensitive
 		{"DB_HOST", "localhost", "localhost"},
 		{"DB_PORT", "5432", "5432"},
+		// Innocuous key, but the value embeds a password in a connection URI:
+		// mask just the password, keep host/db visible.
+		{"DB_URI", "postgres://u:s3cr3t@host:5432/db", "postgres://u:*****@host:5432/db"},
+		{"DSN", "mysql://app:hunter2@10.0.0.1:3306/app", "mysql://app:*****@10.0.0.1:3306/app"},
 	}
 
 	for _, tt := range tests {
 		if got := maskSecretValue(tt.key, tt.value); got != tt.want {
-			t.Errorf("maskSecretValue(%q) = %q, want %q", tt.key, got, tt.want)
+			t.Errorf("maskSecretValue(%q, %q) = %q, want %q", tt.key, tt.value, got, tt.want)
 		}
 	}
 

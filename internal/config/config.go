@@ -17,6 +17,18 @@ type DatabaseConfig struct {
 	DatabaseUser     string `mapstructure:"database_user"`
 	DatabasePassword string `mapstructure:"database_password"`
 	DatabaseName     string `mapstructure:"database_name"`
+
+	// DatabaseSSLMode controls transport encryption for the admin dial.
+	// Empty means "secure default" (resolved per engine); set "disable" to opt
+	// out for local development. Postgres accepts libpq sslmode values
+	// (disable|require|verify-ca|verify-full); MySQL maps them onto the
+	// go-sql-driver tls values.
+	DatabaseSSLMode string `mapstructure:"database_sslmode"`
+
+	// DatabaseUserHost is the host part of the account MySQL provisions
+	// (`user'@'<host>`). Empty defaults to '%'. Scope it (e.g. "10.0.%") to stop
+	// provisioned accounts being reachable from anywhere. Ignored by Postgres.
+	DatabaseUserHost string `mapstructure:"database_user_host"`
 }
 
 // Config holds the entire configuration including database and Infisical. including database and Infisica
@@ -140,7 +152,7 @@ func envBoundKeys() []string {
 		"infisical_site_url",
 	}
 	for _, engine := range []string{"postgres", "mysql"} {
-		for _, field := range []string{"database_hostname", "database_port", "database_user", "database_password", "database_name"} {
+		for _, field := range []string{"database_hostname", "database_port", "database_user", "database_password", "database_name", "database_sslmode", "database_user_host"} {
 			keys = append(keys, engine+"."+field)
 		}
 	}

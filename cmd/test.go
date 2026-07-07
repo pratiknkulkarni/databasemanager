@@ -33,9 +33,14 @@ func newTestCmd(container *app.Container) *cobra.Command {
 				return err
 			}
 
+			// TLS posture for the app dial comes from the engine's config
+			// section (empty => secure default inside the database package).
+			engineCfg, _ := container.Config.Engine(dbType)
+			warnInsecureTLS(container, dbType, engineCfg)
+
 			container.Logger.Info("testing connection", "app", appName, "type", dbType, "env", env)
 
-			if err := database.TestAppConnection(ctx, creds); err != nil {
+			if err := database.TestAppConnection(ctx, creds, engineCfg.DatabaseSSLMode); err != nil {
 				return fmt.Errorf("connection test failed: %w", err)
 			}
 

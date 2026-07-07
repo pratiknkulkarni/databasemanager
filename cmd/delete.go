@@ -54,6 +54,7 @@ func newDeleteCmd(container *app.Container) *cobra.Command {
 			}
 
 			engineCfg, _ := container.Config.Engine(engine)
+			warnInsecureTLS(container, engine, engineCfg)
 			db, err := database.New(engine, engineCfg)
 			if err != nil {
 				return err

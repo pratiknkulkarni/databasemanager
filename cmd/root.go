@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/log"
 	"github.com/praaatik/databasemanager/internal/app"
@@ -9,6 +10,15 @@ import (
 	"github.com/praaatik/databasemanager/internal/infisical"
 	"github.com/spf13/cobra"
 )
+
+// warnInsecureTLS emits a loud warning when an engine section explicitly
+// disables transport encryption, so a cleartext dial is never silent.
+func warnInsecureTLS(container *app.Container, engine string, cfg config.DatabaseConfig) {
+	if strings.EqualFold(cfg.DatabaseSSLMode, "disable") || strings.EqualFold(cfg.DatabaseSSLMode, "false") {
+		container.Logger.Warn("TLS is DISABLED for this connection — credentials travel in cleartext",
+			"engine", engine)
+	}
+}
 
 // NewRootCmd creates the root command. The container arrives with only the
 // logger set; config and the Infisical client are populated here, after Cobra
