@@ -3,8 +3,11 @@
 A single-shot CLI that provisions **isolated PostgreSQL and MySQL databases** — one database,
 one owning user, privilege-hardened — and records the resulting credentials as secrets in
 **[Infisical](https://infisical.com) Secrets Manager**. It then reads those secrets back to
-list them, emit connection strings in several formats, test connectivity, and cleanly
-deprovision everything (database, user, secrets, folder) when an app is retired.
+list them, emit connection strings in several formats, test connectivity, **rotate
+passwords** (with automatic rollback if the secret update fails), and cleanly deprovision
+everything (database, user, secrets, folder) when an app is retired. Provisioning is
+**convergent on demand**: `--adopt` reconciles any partial state — orphaned databases,
+missing secrets, crashed syncs — in one command.
 
 Think of it as a tiny self-service database vending machine for a team or homelab:
 `provision myapp` gives you a locked-down database whose credentials live in your secrets
@@ -81,6 +84,12 @@ $ databasemanager conn billing-api
   delete ──► resolve recorded DB_NAME/DB_USER from Infisical ──► confirm ──► DROP DATABASE +
              (never guessed from the app name)                               DROP USER ──► delete
                                                                               secrets ──► delete folder
+
+  rotate ──► resolve recorded DB_USER ──► confirm ──► ALTER USER (new password) ──► update
+             DB_PASSWORD in Infisical (on failure: restore old password) ──► verify dial
+
+  provision --adopt ──► converge: keep existing db/user (reset password), re-apply
+                        hardening, reconcile secrets — heals any partial state
 ```
 
 ### Process model
@@ -300,6 +309,8 @@ environment.
 | `--schema` | string | `public` (pg) | **Postgres only.** Schema for the app. `public` grants the app user `ALL` on the (locked-down) public schema; any other value creates that schema `AUTHORIZATION <app user>`. Passing `--schema` with `--type mysql` is **rejected up front** — it would record a `DB_SCHEMA` secret every reader rejects for MySQL. |
 | `--host` | string | *(engine config)* | Override the host **recorded** in the `DB_HOST` secret. Useful when apps reach the server via a different address than the admin (e.g. you dial `127.0.0.1`, apps use `db.svc.cluster.local`). Does *not* change where provisioning connects. |
 | `--port` | int | *(engine config)* | Override the **recorded** `DB_PORT`, same semantics as `--host`. |
+| `--adopt` | bool | `false` | **Convergent provisioning.** Pre-existing database/user are kept instead of causing an error, and recorded secrets are reconciled in place. See [Adoption & recovery](#adoption--recovery) below — this is the one-command healer for every partial-failure state. Implies a password reset for the app user. |
+| `--force` | bool | `false` | Skip the adoption confirmation prompt. Only meaningful together with `--adopt` (strict provisioning never prompts). |
 
 **Examples:**
 
@@ -314,10 +325,59 @@ databasemanager provision billing-api --type mysql --env prod --db billing
 databasemanager provision analytics --schema analytics --host db.prod.internal
 ```
 
-**Failure modes worth knowing:** `database "x" already exists` (nothing changed);
-`invalid provision options: database user "…" exceeds 32 characters`; TLS handshake failure
-against a non-TLS server (see [Security model](#security-model) — set
-`database_sslmode: disable` explicitly for plaintext local dev).
+**Failure modes worth knowing:** `database "x" already exists (re-run with --adopt to
+converge it)` (nothing changed); `app "x" already has recorded secrets … re-run with
+--adopt to reconcile` (nothing changed — caught in pre-flight); `invalid provision
+options: database user "…" exceeds 32 characters`; TLS handshake failure against a
+non-TLS server (see [Security model](#security-model) — set `database_sslmode: disable`
+explicitly for plaintext local dev).
+
+#### Adoption & recovery
+
+`--adopt` switches provisioning from *create-or-die* to **converge-to-desired-state**:
+
+| Resource | Absent | Present |
+|---|---|---|
+| Database | created (as normal) | **adopted** — data preserved; ownership converged onto the app user (Postgres `ALTER DATABASE … OWNER TO`) |
+| User | created (as normal) | **adopted** — kept, but its password is **reset** to the run's known one (the old password is unrecoverable: servers store only hashes) |
+| Hardening / grants | applied | **re-applied idempotently** (custom schemas use `CREATE SCHEMA IF NOT EXISTS` + owner convergence) |
+| Secrets | created | **reconciled**: stale values updated, missing keys created, stale *contract* keys deleted (e.g. a leftover `DB_SCHEMA`) — operator-owned extras in the folder are never touched |
+
+Safety rails:
+
+- **Confirmation prompt** (skip with `--force`) states exactly what adoption does —
+  password reset, hardening re-application, secret reconciliation — because it mutates
+  resources this run did not create. ⚠️ *Adopting a hand-made database applies the same
+  lockdown as a fresh one (on Postgres, `PUBLIC` loses access and the `public` schema is
+  re-owned): fine for databases this tool created, potentially disruptive for others.*
+- **Engine identity is checked before any mutation**: adopting an app recorded as `mysql`
+  with `--type postgres` is refused. Adoption converges an app; it never converts one
+  across engines. (A *legacy* app with no `DB_TYPE` adopts cleanly and gains the full
+  contract — adoption doubles as the legacy-upgrade path.)
+- **Rollback still only drops what the run created.** Adopted resources are never dropped
+  by a failed run's cleanup.
+- Names are matched by the same derivation/override rules as normal provisioning — to
+  adopt a database provisioned under custom names, pass the same `--db`/`--user`.
+
+**Every partial state has the same one-command recovery:**
+
+```bash
+# State A — database created, secret sync failed (password was printed at failure time):
+databasemanager provision billing-api --adopt
+#   → db+user adopted, fresh password applied, all secrets created. Healed.
+
+# State B — offline provisioning (Infisical was down; credentials captured from stdout):
+databasemanager provision billing-api --adopt --pass '<captured-password>'
+#   → db side re-converged with the SAME password (no app disruption), secrets recorded.
+
+# State C — secrets exist but the database is gone (dropped by hand / dev reset):
+databasemanager provision billing-api --adopt
+#   → db+user recreated, recorded secrets updated to the new reality. Healed.
+
+# Crash mid-sync — some keys landed, some didn't:
+databasemanager provision billing-api --adopt
+#   → plan recomputed from what actually exists; only the gaps are written.
+```
 
 ---
 
@@ -605,6 +665,10 @@ and the audit trail live in `ARCHITECTURE.md` §13:
 - **Scoped MySQL accounts.** `database_user_host` narrows `'user'@'%'` to your network.
 - **Least-privilege Postgres databases.** `PUBLIC` loses `CONNECT` on the new database and
   all rights on its `public` schema; only the app user is granted back.
+- **Fail-safe mutations across two stores.** Rotation restores the old database password
+  when the secret update fails; provisioning pre-flights the secret store before touching
+  the database; and whenever a generated password would otherwise be lost, it is printed
+  to the terminal as the operator's only copy — never silently dropped.
 
 ---
 
@@ -622,7 +686,7 @@ and the audit trail live in `ARCHITECTURE.md` §13:
 
 ## Test suite guide
 
-`make test` / `go test ./...` — **34 top-level tests, 84 including subtests**, all pure unit
+`make test` / `go test ./...` — **58 top-level tests, 118 including subtests**, all pure unit
 tests: no database server or Infisical needed, and the suite passes under `-race`. What each
 one proves:
 
@@ -640,6 +704,7 @@ one proves:
 | `TestMaskByRegeneration` | **Security pin (S6):** table masking rebuilds strings with a `*****` marker; a password `p@ss word` leaks in *no* format, in no encoding (`%20` checked too) |
 | `TestMaskPasswordString` | Clipboard preview: short passwords fully masked (`***`), long ones keep 2+2 edge chars (`su***23`) |
 | `TestMaskSecretValue` (12 cases) | **Security pin (S7):** `list` masking — sensitive keywords (`PASSWORD`, `PWD`, `KEY`, `SECRET`, `TOKEN`, `CREDENTIAL`, case-insensitive) render `*****`; non-sensitive keys pass through; a `postgres://u:s3cr3t@host/db` value under an innocuous key (`DB_URI`, `DSN`) has just its password masked |
+| `TestResolveEngine` (5 subtests) | The shared engine-resolution policy (`delete`/`rotate`): stored `DB_TYPE` is authoritative, `--type` is only a legacy fallback, missing both is an actionable error, disagreement is rejected — never silently overridden |
 
 ### `internal/config` (`config_test.go`)
 
@@ -665,9 +730,11 @@ one proves:
 | `TestMySQLClient_escapeLiteral` | **Security pin (S2):** escaping follows the server's SQL mode — under `NO_BACKSLASH_ESCAPES` quotes are doubled and backslashes left alone; otherwise backslash-escaped |
 | `TestMySQLTLSParam` (6 cases) | **Security pin (S1):** sslmode→driver-tls mapping: empty → `skip-verify` (secure default), `disable/false` → off, `require` → `skip-verify`, `verify-full` → `true`, unknown values pass through as custom config names |
 | `TestMySQLDelete_RejectsBadIdentifiers` | **Security pin (S2):** `Delete` on a client with **no connection** rejects `db'; DROP DATABASE prod; --` — a malicious Infisical secret is refused before any dial |
+| `TestMySQLRotate_RejectsBadInput` | The rotate path applies the same pre-dial gates: Infisical-sourced user names pass the identifier allowlist, empty passwords are refused before any SQL |
 | `TestPostgresDSN_QuotesValuesAndDefaultsSecure` | **Security pin (S3):** an admin password of `x host=evil.example` is quoted into the DSN instead of injecting a second `host=` keyword; `sslmode=require` is the unset default |
 | `TestPostgresDSN_HonoursConfiguredSSLMode` | An explicit `database_sslmode: disable` reaches the DSN (the opt-out works) |
 | `TestPostgresDelete_RejectsBadIdentifiers` | **Security pin (S2):** the same pre-dial identifier gate on the Postgres delete path (`u"; DROP ROLE x; --` refused) |
+| `TestPostgresRotate_RejectsBadInput` | Postgres mirror of the rotate-path gates (bad identifier, empty password — both refused pre-dial) |
 
 ### `internal/services` — provisioning lifecycle
 
@@ -680,12 +747,52 @@ one proves:
 | `TestProvisioner_Run_RejectsSchemaForMySQL` | `--schema` + MySQL fails **before** `DB.Provision` is ever called |
 | `TestSanitizeAppName` (3 cases) | Hyphen → underscore mapping, including multi-hyphen names |
 
+### `internal/services` — Infisical-backed lifecycle (via the `SecretStore` fake)
+
+The `SecretStore` port makes every Infisical-backed flow unit-testable with an in-memory
+fake supporting per-operation error injection:
+
+| Test | What it proves |
+|---|---|
+| `TestProvisioner_Run_ReturnsCredentialsOnSyncFailure` | **The Phase 0 contract:** when the DB is created but the sync fails, `Run` returns the result *alongside* the error — the only copy of the generated password is surfaceable, never lost |
+| `TestProvisioner_Run_FailsFastOnRecordedApp` | Pre-flight: an app with recorded contract secrets is refused **before any database mutation** |
+| `TestProvisioner_Run_FailsFastOnFolderError` | Pre-flight: a broken secret store (wrong `--env`, outage) fails while there is still nothing to clean up — previously this produced an orphaned database |
+| `TestProvisioner_ResolveApp` (3 subtests) | Source-of-truth resolution: not-found and incomplete-secrets errors, recorded names returned verbatim |
+| `TestProvisioner_Deprovision` (2 subtests) | Cleanup order (DB drop → each secret → folder) and `database deleted, but failed to …` partial-failure naming |
+
+### `internal/services` — rotation (`rotate_test.go`)
+
+| Test | What it proves |
+|---|---|
+| `TestProvisioner_Rotate_GeneratesAndRecordsPassword` | Happy path: the *recorded* user rotates with a fresh 32-hex password; database and Infisical hold the **same** value; the existing secret is updated in place (not re-created) |
+| `TestProvisioner_Rotate_HonoursOverride` | `--pass` reaches the database verbatim |
+| `TestProvisioner_Rotate_RequiresInfisical` | No Infisical → no database mutation, hard error |
+| `TestProvisioner_Rotate_RollsBackOnSyncFailure` | **The consistency contract:** a failed `DB_PASSWORD` update triggers a second `RotatePassword` restoring the *old* password — a failed rotation changes nothing |
+| `TestProvisioner_Rotate_SurfacesPasswordWhenRollbackFails` | The last-resort path: when apply succeeded but both the secret update *and* the rollback failed, the result carries the live new password so the caller can print the only copy |
+| `TestProvisioner_Rotate_RecreatesMissingPasswordSecret` | Recovery use-case: a deleted `DB_PASSWORD` doesn't block rotation — a fresh secret is created |
+| `TestProvisioner_Rotate_BackfillsLegacyType` | Legacy apps rotated via `--type` yield credentials carrying the resolved engine (so the verification dial works) |
+
+### `internal/services` — reconciliation & adoption (`syncplan_test.go`, `adopt_test.go`)
+
+| Test | What it proves |
+|---|---|
+| `TestPlanSecretSync_AllNew` | Fresh app → creates only, in the contract's deterministic order |
+| `TestPlanSecretSync_AllUnchanged` | Converged app → a no-op plan (no rewrites of identical values) |
+| `TestPlanSecretSync_Mixed` | Crash-mid-sync remnant → correct create/update/unchanged split |
+| `TestPlanSecretSync_DeletesStaleContractKeys` | A stale `DB_SCHEMA` (from an app's postgres past) is planned for deletion — otherwise every reader rejects the app |
+| `TestPlanSecretSync_PreservesOperatorKeys` | **Safety boundary:** keys outside the contract are operator-owned and never deleted |
+| `TestProvisioner_Run_Adopt_ReconcilesRecordedApp` | State A/B recovery: adopt reaches the adapter, exactly the changed facts are rewritten (1 update, 6 unchanged), operator keys survive, DB and Infisical agree on the fresh password |
+| `TestProvisioner_Run_Adopt_TypeMismatchRejected` | Adoption never converts engines — recorded `mysql` + `--type postgres` is refused **before any database mutation** |
+| `TestProvisioner_Run_Adopt_UpgradesLegacyApp` | A legacy app (no `DB_TYPE`) adopts cleanly and gains the full contract |
+| `TestProvisioner_Run_Adopt_HealsMissingDatabase` | State C recovery: database recreated, recorded password updated to the new reality |
+
 ### What is deliberately *not* unit-tested
 
-Live SQL execution (the actual `CREATE`/`GRANT`/`DROP` statements) and the
-Infisical-backed flows (`ResolveApp`, `Deprovision`, folder creation) need real servers;
-they're covered by the smoke-test procedure in `HARDENING_PLAYBOOK.md` (Docker Postgres +
-MySQL, offline provisioning mode).
+Live SQL execution — the actual `CREATE`/`GRANT`/`DROP`/`ALTER` statements, including the
+adopt-mode existence checks (`pg_roles` / `mysql.user`) and ownership convergence — needs
+real servers; it's covered by the smoke-test procedure in `HARDENING_PLAYBOOK.md` (Docker
+Postgres + MySQL, offline provisioning mode). A build-tagged `testcontainers-go`
+integration suite remains the highest-value addition (see the gap table).
 
 ---
 
@@ -697,7 +804,6 @@ An honest gap analysis of the current tree.
 
 | Gap | Detail |
 |---|---|
-| **Idempotent / resumable provisioning** | `database already exists` is fatal and the secret sync uses per-key **create** (no upsert). If provisioning succeeds but the sync fails, there is no `--adopt`/`--resync` to reconcile — you must delete and re-provision. |
 | **Version information** | No `--version`/`version` command and no `-ldflags` version stamping in the Makefile. Hard to know what build is deployed. |
 | **CI pipeline** | No `.github/workflows` — tests/vet/race run only locally. A minimal `go test -race ./...` + `go vet` workflow would protect the invariants the registers fought for. |
 | **LICENSE is empty** | The `LICENSE` file is 0 bytes, i.e. the project is effectively unlicensed. Pick one (MIT/Apache-2.0) and fill it in. |

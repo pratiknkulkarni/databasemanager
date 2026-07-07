@@ -29,6 +29,21 @@ type ProvisionOptions struct {
 	DatabasePort     int
 	DatabaseHostname string
 	Schema           string
+
+	// Adopt makes provisioning convergent: a pre-existing database or user
+	// is kept (the user's password is reset to the known one, since the old
+	// password is unrecoverable) instead of causing an error, and privilege
+	// hardening is re-applied idempotently. Rollback still only ever drops
+	// what the current run created — adopted resources are never dropped.
+	Adopt bool
+}
+
+// ProvisionReport states what a provisioning run actually did, so callers
+// can report honestly. A false field means the resource pre-existed and was
+// adopted rather than created.
+type ProvisionReport struct {
+	DatabaseCreated bool
+	UserCreated     bool
 }
 
 // Validate verifies the provisioning options before any SQL is built from
@@ -75,7 +90,7 @@ type provisionState struct {
 // Database is the set of operations commands actually invoke on an engine.
 // Connection management is an internal concern of each implementation.
 type Database interface {
-	Provision(ctx context.Context, provisionOptions ProvisionOptions) error
+	Provision(ctx context.Context, provisionOptions ProvisionOptions) (ProvisionReport, error)
 	Delete(ctx context.Context, databaseName, userName string) error
 	// RotatePassword sets a new password for an existing provisioned user.
 	// The user name arrives from Infisical, not the validated provision

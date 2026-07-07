@@ -132,23 +132,34 @@ func (m *MySQLClient) Close() error {
 	return err
 }
 
-func (m *MySQLClient) Provision(ctx context.Context, opts ProvisionOptions) (err error) {
+func (m *MySQLClient) Provision(ctx context.Context, opts ProvisionOptions) (report ProvisionReport, err error) {
 	if err := opts.Validate(); err != nil {
-		return fmt.Errorf("invalid provision options: %w", err)
+		return report, fmt.Errorf("invalid provision options: %w", err)
 	}
 
 	if err := m.ensureConnection(ctx); err != nil {
-		return err
+		return report, err
 	}
 
-	exists, err := m.databaseExists(ctx, opts.DatabaseName)
+	dbExists, err := m.databaseExists(ctx, opts.DatabaseName)
 	if err != nil {
-		return fmt.Errorf("failed to check if database exists: %w", err)
+		return report, fmt.Errorf("failed to check if database exists: %w", err)
 	}
-	if exists {
-		return fmt.Errorf("database %q already exists", opts.DatabaseName)
+	userExists, err := m.userExists(ctx, opts.DatabaseUser)
+	if err != nil {
+		return report, fmt.Errorf("failed to check if user exists: %w", err)
+	}
+	if !opts.Adopt {
+		if dbExists {
+			return report, fmt.Errorf("database %q already exists (re-run with --adopt to converge it)", opts.DatabaseName)
+		}
+		if userExists {
+			return report, fmt.Errorf("user %q already exists at host %q (re-run with --adopt to converge it)", opts.DatabaseUser, m.userHost())
+		}
 	}
 
+	// The state machine records only what THIS run creates, so the deferred
+	// rollback never drops adopted (pre-existing) resources.
 	state := &provisionState{}
 	defer func() {
 		if err != nil {
@@ -156,28 +167,40 @@ func (m *MySQLClient) Provision(ctx context.Context, opts ProvisionOptions) (err
 		}
 	}()
 
-	// Create database
-	if err = m.createDatabase(ctx, opts.DatabaseName); err != nil {
-		return err
+	// Database: create, or adopt as-is (charset of a pre-existing database
+	// is deliberately left untouched — adoption is non-destructive to data).
+	if !dbExists {
+		if err = m.createDatabase(ctx, opts.DatabaseName); err != nil {
+			return report, err
+		}
+		state.databaseCreated = true
+		report.DatabaseCreated = true
 	}
-	state.databaseCreated = true
 
-	// Create user
-	if err = m.createUser(ctx, opts.DatabaseUser, opts.DatabasePassword); err != nil {
-		return err
+	// User: create, or adopt by applying the known password — the existing
+	// one is unrecoverable (only hashes are stored server-side).
+	if userExists {
+		if err = m.RotatePassword(ctx, opts.DatabaseUser, opts.DatabasePassword); err != nil {
+			return report, err
+		}
+	} else {
+		if err = m.createUser(ctx, opts.DatabaseUser, opts.DatabasePassword); err != nil {
+			return report, err
+		}
+		state.userCreated = true
+		report.UserCreated = true
 	}
-	state.userCreated = true
 
-	// Grant all privileges
+	// Grants are idempotent — safe to re-apply on adopted resources.
 	if err = m.grantDatabasePrivileges(ctx, opts.DatabaseName, opts.DatabaseUser); err != nil {
-		return err
+		return report, err
 	}
 
 	if err = m.flushPrivileges(ctx); err != nil {
-		return err
+		return report, err
 	}
 
-	return nil
+	return report, nil
 }
 
 // quoteMySQLIdentifier escapes a backtick-quoted identifier by doubling
@@ -230,6 +253,22 @@ func (m *MySQLClient) databaseExists(ctx context.Context, name string) (bool, er
 	var dbName string
 	query := "SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME = ?"
 	err := m.db.QueryRowContext(ctx, query, name).Scan(&dbName)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// userExists reports whether the provisioned account 'name'@'<userHost>'
+// exists. Host-scoped on purpose: an account under a different host is a
+// different account, and adopting it would diverge from what Delete drops.
+func (m *MySQLClient) userExists(ctx context.Context, name string) (bool, error) {
+	var one int
+	query := "SELECT 1 FROM mysql.user WHERE user = ? AND host = ?"
+	err := m.db.QueryRowContext(ctx, query, name, m.userHost()).Scan(&one)
 	if err == sql.ErrNoRows {
 		return false, nil
 	}

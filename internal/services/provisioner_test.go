@@ -28,6 +28,7 @@ type rotateCall struct {
 type MockDB struct {
 	ProvisionCalled bool
 	ProvisionOpts   database.ProvisionOptions
+	Report          database.ProvisionReport // returned by Provision (zero value = everything adopted)
 	DeleteCalled    bool
 	DeletedName     string
 	DeletedUser     string
@@ -36,10 +37,10 @@ type MockDB struct {
 	RotateErrOnCall int // 1-based call number RotateErr fires on; 0 = every call
 }
 
-func (m *MockDB) Provision(_ context.Context, opts database.ProvisionOptions) error {
+func (m *MockDB) Provision(_ context.Context, opts database.ProvisionOptions) (database.ProvisionReport, error) {
 	m.ProvisionCalled = true
 	m.ProvisionOpts = opts
-	return nil
+	return m.Report, nil
 }
 
 func (m *MockDB) Delete(_ context.Context, databaseName, userName string) error {

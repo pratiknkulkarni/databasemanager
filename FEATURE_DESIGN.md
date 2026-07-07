@@ -1,7 +1,10 @@
 # Feature Design — `rotate` and idempotent provisioning (`--adopt`)
 
-**Status:** Design, not yet implemented. Written 2026-07-07 against the
-post-hardening tree (branch `harden/tls-injection-masking`).
+**Status:** Phases 0–3 **implemented** on branch `feat/rotate-and-adopt`
+(2026-07-07), one commit per phase; Phase 4 (build-tagged `testcontainers-go`
+integration suite) remains open. The `secretStore` port recommended in §1.6 was
+pulled into Phase 1 as designed. Written 2026-07-07 against the post-hardening
+tree (branch `harden/tls-injection-masking`).
 Companion to [`ARCHITECTURE.md`](ARCHITECTURE.md) (invariants referenced as §11.*) and
 [`README.md`](README.md) (gap table this design executes).
 

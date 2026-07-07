@@ -92,23 +92,43 @@ func (p *PostgresClient) databaseExists(ctx context.Context, name string) (bool,
 	return exists, nil
 }
 
-func (p *PostgresClient) Provision(ctx context.Context, opts ProvisionOptions) (err error) {
+func (p *PostgresClient) userExists(ctx context.Context, name string) (bool, error) {
+	var exists bool
+	err := p.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname = $1)", name).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+func (p *PostgresClient) Provision(ctx context.Context, opts ProvisionOptions) (report ProvisionReport, err error) {
 	if err := opts.Validate(); err != nil {
-		return fmt.Errorf("invalid provision options: %w", err)
+		return report, fmt.Errorf("invalid provision options: %w", err)
 	}
 
 	if err := p.ensureConnection(ctx); err != nil {
-		return err
+		return report, err
 	}
 
-	exists, err := p.databaseExists(ctx, opts.DatabaseName)
+	dbExists, err := p.databaseExists(ctx, opts.DatabaseName)
 	if err != nil {
-		return fmt.Errorf("failed to check if database exists: %w", err)
+		return report, fmt.Errorf("failed to check if database exists: %w", err)
 	}
-	if exists {
-		return fmt.Errorf("database %q already exists", opts.DatabaseName)
+	userExists, err := p.userExists(ctx, opts.DatabaseUser)
+	if err != nil {
+		return report, fmt.Errorf("failed to check if user exists: %w", err)
+	}
+	if !opts.Adopt {
+		if dbExists {
+			return report, fmt.Errorf("database %q already exists (re-run with --adopt to converge it)", opts.DatabaseName)
+		}
+		if userExists {
+			return report, fmt.Errorf("user %q already exists (re-run with --adopt to converge it)", opts.DatabaseUser)
+		}
 	}
 
+	// The state machine records only what THIS run creates, so the deferred
+	// rollback never drops adopted (pre-existing) resources.
 	state := &provisionState{}
 	defer func() {
 		if err != nil {
@@ -119,26 +139,42 @@ func (p *PostgresClient) Provision(ctx context.Context, opts ProvisionOptions) (
 	userStr := pq.QuoteIdentifier(opts.DatabaseUser)
 	dbStr := pq.QuoteIdentifier(opts.DatabaseName)
 
-	// 1. Create User
-	_, err = p.db.ExecContext(ctx, fmt.Sprintf("CREATE USER %s WITH PASSWORD %s", userStr, pq.QuoteLiteral(opts.DatabasePassword)))
-	if err != nil {
-		return fmt.Errorf("failed to create user: %w", err)
+	// 1. User: create, or adopt by applying the known password — the
+	// existing one is unrecoverable (only hashes are stored server-side).
+	if userExists {
+		if err = p.RotatePassword(ctx, opts.DatabaseUser, opts.DatabasePassword); err != nil {
+			return report, err
+		}
+	} else {
+		_, err = p.db.ExecContext(ctx, fmt.Sprintf("CREATE USER %s WITH PASSWORD %s", userStr, pq.QuoteLiteral(opts.DatabasePassword)))
+		if err != nil {
+			return report, fmt.Errorf("failed to create user: %w", err)
+		}
+		state.userCreated = true
+		report.UserCreated = true
 	}
-	state.userCreated = true
 
-	// 2. Create Database
-	_, err = p.db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE %s OWNER %s", dbStr, userStr))
-	if err != nil {
-		return fmt.Errorf("failed to create database: %w", err)
+	// 2. Database: create, or adopt by converging ownership onto the app user.
+	if dbExists {
+		if _, err = p.db.ExecContext(ctx, fmt.Sprintf("ALTER DATABASE %s OWNER TO %s", dbStr, userStr)); err != nil {
+			return report, fmt.Errorf("failed to converge database owner: %w", err)
+		}
+	} else {
+		_, err = p.db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE %s OWNER %s", dbStr, userStr))
+		if err != nil {
+			return report, fmt.Errorf("failed to create database: %w", err)
+		}
+		state.databaseCreated = true
+		report.DatabaseCreated = true
 	}
-	state.databaseCreated = true
 
-	// 3. HARDENING: Connect to the new DB to lock it down
+	// 3. HARDENING: Connect to the new DB to lock it down. Every statement
+	// is idempotent, so re-applying on an adopted database is safe.
 	if err = p.lockdownDatabase(ctx, opts); err != nil {
-		return fmt.Errorf("failed to apply security hardening: %w", err)
+		return report, fmt.Errorf("failed to apply security hardening: %w", err)
 	}
 
-	return nil
+	return report, nil
 }
 
 // rollbackProvision drops whatever a failed provisioning run created. It uses
@@ -192,10 +228,14 @@ func (p *PostgresClient) lockdownDatabase(ctx context.Context, opts ProvisionOpt
 			return fmt.Errorf("failed to grant schema access to user: %w", err)
 		}
 	} else if opts.Schema != "" {
-		// Create Custom Schema
+		// Create the custom schema (or adopt an existing one) and converge
+		// its ownership onto the app user.
 		schemaStr := pq.QuoteIdentifier(opts.Schema)
-		if _, err := appDB.ExecContext(ctx, fmt.Sprintf("CREATE SCHEMA %s AUTHORIZATION %s", schemaStr, userStr)); err != nil {
+		if _, err := appDB.ExecContext(ctx, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s AUTHORIZATION %s", schemaStr, userStr)); err != nil {
 			return fmt.Errorf("failed to create custom schema: %w", err)
+		}
+		if _, err := appDB.ExecContext(ctx, fmt.Sprintf("ALTER SCHEMA %s OWNER TO %s", schemaStr, userStr)); err != nil {
+			return fmt.Errorf("failed to converge custom schema owner: %w", err)
 		}
 	}
 

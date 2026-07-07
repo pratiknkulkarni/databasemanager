@@ -44,6 +44,11 @@ type ProvisionRequest struct {
 	AppName     string
 	Environment string // dev, prod, etc
 
+	// Adopt makes provisioning convergent: pre-existing database/user are
+	// kept (password reset to the known one) and recorded secrets are
+	// reconciled instead of rejected. See database.ProvisionOptions.Adopt.
+	Adopt bool
+
 	// Overrides
 	DBName     string
 	DBUser     string
@@ -59,7 +64,14 @@ type ProvisionRequest struct {
 type ProvisionResult struct {
 	Options     database.ProvisionOptions
 	Credentials database.Credentials
+	Report      database.ProvisionReport
 	Synced      bool
+
+	// Secret reconciliation counts (all zero when Synced is false).
+	SecretsCreated   int
+	SecretsUpdated   int
+	SecretsDeleted   int
+	SecretsUnchanged int
 }
 
 // secretPath returns the Infisical folder path for an app.
@@ -86,18 +98,25 @@ func (p *Provisioner) Run(ctx context.Context, req ProvisionRequest) (*Provision
 	// still nothing to clean up.
 	var existing map[string]string
 	if p.deps.Secrets != nil {
-		existing, err = p.prepareSecretSync(req.AppName, req.Environment)
+		existing, err = p.prepareSecretSync(req.AppName, req.Environment, req.Adopt)
 		if err != nil {
 			return nil, err
 		}
 	}
 
-	p.deps.Logger.Info("provisioning database", "name", opts.DatabaseName, "user", opts.DatabaseUser)
-	if err := p.deps.DB.Provision(ctx, *opts); err != nil {
+	p.deps.Logger.Info("provisioning database", "name", opts.DatabaseName, "user", opts.DatabaseUser, "adopt", opts.Adopt)
+	report, err := p.deps.DB.Provision(ctx, *opts)
+	if err != nil {
 		return nil, fmt.Errorf("database provisioning failed: %w", err)
 	}
+	if opts.Adopt && !report.DatabaseCreated {
+		p.deps.Logger.Info("adopted existing database", "name", opts.DatabaseName)
+	}
+	if opts.Adopt && !report.UserCreated {
+		p.deps.Logger.Info("adopted existing user (password reset)", "user", opts.DatabaseUser)
+	}
 
-	result := &ProvisionResult{Options: *opts, Credentials: p.credentials(*opts)}
+	result := &ProvisionResult{Options: *opts, Credentials: p.credentials(*opts), Report: report}
 
 	if p.deps.Secrets == nil {
 		p.deps.Logger.Warn("skipping infisical sync: client not initialized")
@@ -114,15 +133,22 @@ func (p *Provisioner) Run(ctx context.Context, req ProvisionRequest) (*Provision
 		return result, fmt.Errorf("infisical sync failed: %w", err)
 	}
 	result.Synced = true
+	result.SecretsCreated = len(plan.creates)
+	result.SecretsUpdated = len(plan.updates)
+	result.SecretsDeleted = len(plan.deletes)
+	result.SecretsUnchanged = plan.unchanged
 
 	return result, nil
 }
 
 // prepareSecretSync verifies the secret store is ready to record the app
 // before any database mutation: the folder exists (fail-closed creation) and
-// the app is not already recorded. It returns the secrets currently stored at
-// the app's path for reconciliation planning.
-func (p *Provisioner) prepareSecretSync(appName, environment string) (map[string]string, error) {
+// the recorded state is compatible with the run. In strict mode an
+// already-recorded app is rejected; in adopt mode the recorded DB_TYPE must
+// match the target engine (adoption converges an app, it never converts one
+// across engines). It returns the secrets currently stored at the app's path
+// for reconciliation planning.
+func (p *Provisioner) prepareSecretSync(appName, environment string, adopt bool) (map[string]string, error) {
 	if err := p.ensureFolder(appName, environment); err != nil {
 		return nil, err
 	}
@@ -132,9 +158,20 @@ func (p *Provisioner) prepareSecretSync(appName, environment string) (map[string
 		return nil, fmt.Errorf("failed to inspect existing secrets for app %q: %w", appName, err)
 	}
 
+	if adopt {
+		// A missing DB_TYPE is allowed: adopting a legacy app upgrades it to
+		// the full contract.
+		if t := existing[database.SecretKeyType]; t != "" && t != p.deps.Engine {
+			return nil, fmt.Errorf("app %q is recorded as %s; refusing to adopt as %s (delete and re-provision to switch engines)",
+				appName, t, p.deps.Engine)
+		}
+		return existing, nil
+	}
+
 	for _, key := range database.ContractKeys() {
 		if _, ok := existing[key]; ok {
-			return nil, fmt.Errorf("app %q already has recorded secrets in environment %q (%s present); delete the app first", appName, environment, key)
+			return nil, fmt.Errorf("app %q already has recorded secrets in environment %q (%s present); re-run with --adopt to reconcile, or delete the app first",
+				appName, environment, key)
 		}
 	}
 
@@ -222,6 +259,7 @@ func (p *Provisioner) prepareOptions(req ProvisionRequest) (*database.ProvisionO
 		DatabasePort:     port,
 		DatabaseHostname: host,
 		Schema:           schema, // Empty for MySQL
+		Adopt:            req.Adopt,
 	}, nil
 }
 

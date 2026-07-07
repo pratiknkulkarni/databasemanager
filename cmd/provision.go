@@ -19,6 +19,8 @@ func newProvisionCmd(container *app.Container) *cobra.Command {
 		dbHost   string
 		dbPort   int
 		env      string
+		adopt    bool
+		force    bool
 	)
 
 	cmd := &cobra.Command{
@@ -37,6 +39,24 @@ func newProvisionCmd(container *app.Container) *cobra.Command {
 			}
 			defer func() { _ = db.Close() }()
 
+			// Adoption mutates resources this run did not create (password
+			// reset, hardening re-applied, secrets reconciled) — make the
+			// operator confirm exactly that.
+			if adopt && !force {
+				prompt := fmt.Sprintf(
+					"About to ADOPT app %q (%s, environment %q) on %s:%d.\n"+
+						"Any existing database and user under this app's names will be kept, but:\n"+
+						"  - the user's password will be RESET (apps holding the current password lose access on reconnect)\n"+
+						"  - privilege hardening will be re-applied\n"+
+						"  - recorded secrets at /%s will be reconciled in place\n"+
+						"Type 'y' or 'yes' to confirm: ",
+					appName, dbType, env, engineCfg.DatabaseHostname, engineCfg.DatabasePort, appName)
+				if !confirmAction(cmd, prompt) {
+					container.Logger.Info("adoption aborted", "app", appName)
+					return nil
+				}
+			}
+
 			provisioner := services.NewProvisioner(services.ProvisionerDeps{
 				DB:        db,
 				Secrets:   services.NewSecretStore(container.Infisical, container.Config.InfisicalProjectID),
@@ -48,6 +68,7 @@ func newProvisionCmd(container *app.Container) *cobra.Command {
 			req := services.ProvisionRequest{
 				AppName:     appName,
 				Environment: env,
+				Adopt:       adopt,
 				DBName:      dbName,
 				DBUser:      dbUser,
 				DBPassword:  dbPass,
@@ -73,7 +94,10 @@ func newProvisionCmd(container *app.Container) *cobra.Command {
 				container.Logger.Info("Successfully provisioned",
 					"app", appName,
 					"db_name", result.Options.DatabaseName,
-					"connection", "Secrets synced to Infisical")
+					"db_created", result.Report.DatabaseCreated,
+					"user_created", result.Report.UserCreated,
+					"secrets", fmt.Sprintf("%d created, %d updated, %d deleted, %d unchanged",
+						result.SecretsCreated, result.SecretsUpdated, result.SecretsDeleted, result.SecretsUnchanged))
 				return nil
 			}
 
@@ -94,6 +118,8 @@ func newProvisionCmd(container *app.Container) *cobra.Command {
 	cmd.Flags().StringVar(&dbSchema, "schema", "", "Override schema name, postgres only (default: public)")
 	cmd.Flags().StringVar(&dbHost, "host", "", "Override recorded database host (default: engine config)")
 	cmd.Flags().IntVar(&dbPort, "port", 0, "Override recorded database port (default: engine config)")
+	cmd.Flags().BoolVar(&adopt, "adopt", false, "Adopt a pre-existing database/user and reconcile secrets (resets the app's password)")
+	cmd.Flags().BoolVar(&force, "force", false, "Skip the adoption confirmation prompt (only meaningful with --adopt)")
 
 	return cmd
 }
