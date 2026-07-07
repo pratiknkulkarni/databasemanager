@@ -78,3 +78,20 @@ func TestMySQLDelete_RejectsBadIdentifiers(t *testing.T) {
 		t.Errorf("expected invalid-characters rejection, got %v", err)
 	}
 }
+
+// TestMySQLRotate_RejectsBadInput mirrors the Postgres gate on the rotate
+// path: Infisical-sourced user names and empty passwords are refused before
+// any SQL or dial.
+func TestMySQLRotate_RejectsBadInput(t *testing.T) {
+	m := &MySQLClient{} // no db handle: validation must fail before dialling
+
+	err := m.RotatePassword(context.Background(), `u'; DROP DATABASE prod; --`, "newpass")
+	if err == nil || !strings.Contains(err.Error(), "invalid characters") {
+		t.Errorf("expected invalid-characters rejection, got %v", err)
+	}
+
+	err = m.RotatePassword(context.Background(), "good_user", "")
+	if err == nil || !strings.Contains(err.Error(), "must not be empty") {
+		t.Errorf("expected empty-password rejection, got %v", err)
+	}
+}

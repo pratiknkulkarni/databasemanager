@@ -47,3 +47,20 @@ func TestPostgresDelete_RejectsBadIdentifiers(t *testing.T) {
 		t.Errorf("expected invalid-characters rejection, got %v", err)
 	}
 }
+
+// TestPostgresRotate_RejectsBadInput proves the rotate path applies the same
+// pre-dial gates as Delete: the Infisical-sourced user name must pass the
+// identifier allowlist, and an empty password is refused before any SQL.
+func TestPostgresRotate_RejectsBadInput(t *testing.T) {
+	p := &PostgresClient{} // no db handle: validation must fail before dialling
+
+	err := p.RotatePassword(context.Background(), `u"; DROP ROLE x; --`, "newpass")
+	if err == nil || !strings.Contains(err.Error(), "invalid characters") {
+		t.Errorf("expected invalid-characters rejection, got %v", err)
+	}
+
+	err = p.RotatePassword(context.Background(), "good_user", "")
+	if err == nil || !strings.Contains(err.Error(), "must not be empty") {
+		t.Errorf("expected empty-password rejection, got %v", err)
+	}
+}

@@ -239,6 +239,32 @@ func (m *MySQLClient) databaseExists(ctx context.Context, name string) (bool, er
 	return true, nil
 }
 
+// RotatePassword sets a new password for an existing provisioned account.
+// The account is addressed as 'user'@'<database_user_host>', so the
+// configured host must still match the one used at provision time. Live
+// sessions are unaffected: MySQL checks passwords at connection time only.
+func (m *MySQLClient) RotatePassword(ctx context.Context, userName, newPassword string) error {
+	// The name arrives from Infisical, not the validated provision path —
+	// gate it on the identifier allowlist before it reaches any SQL.
+	if err := validateIdentifier("database user", userName, maxUserLen); err != nil {
+		return err
+	}
+	if newPassword == "" {
+		return fmt.Errorf("new password must not be empty")
+	}
+
+	if err := m.ensureConnection(ctx); err != nil {
+		return err
+	}
+
+	_, err := m.db.ExecContext(ctx, fmt.Sprintf("ALTER USER '%s'@'%s' IDENTIFIED BY '%s'",
+		m.escapeLiteral(userName), m.escapeLiteral(m.userHost()), m.escapeLiteral(newPassword)))
+	if err != nil {
+		return fmt.Errorf("failed to rotate password (does database_user_host still match the value used at provision time?): %w", err)
+	}
+	return nil
+}
+
 // Delete drops the user and database. Every step is checked: a partial
 // deletion must surface, not silently succeed.
 func (m *MySQLClient) Delete(ctx context.Context, databaseName, userName string) error {

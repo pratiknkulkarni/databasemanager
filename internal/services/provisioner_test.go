@@ -2,7 +2,10 @@ package services
 
 import (
 	"context"
+	"errors"
 	"io"
+	"maps"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/log"
@@ -10,7 +13,16 @@ import (
 	"github.com/praaatik/databasemanager/internal/database"
 )
 
+// errFakeSync is the injected failure used across store-backed tests.
+var errFakeSync = errors.New("injected secret store failure")
+
 // --- Mocks ---
+
+// rotateCall records one RotatePassword invocation.
+type rotateCall struct {
+	User     string
+	Password string
+}
 
 // MockDB implements database.Database for testing purposes
 type MockDB struct {
@@ -19,6 +31,9 @@ type MockDB struct {
 	DeleteCalled    bool
 	DeletedName     string
 	DeletedUser     string
+	RotateCalls     []rotateCall
+	RotateErr       error
+	RotateErrOnCall int // 1-based call number RotateErr fires on; 0 = every call
 }
 
 func (m *MockDB) Provision(_ context.Context, opts database.ProvisionOptions) error {
@@ -34,7 +49,94 @@ func (m *MockDB) Delete(_ context.Context, databaseName, userName string) error 
 	return nil
 }
 
+func (m *MockDB) RotatePassword(_ context.Context, userName, newPassword string) error {
+	m.RotateCalls = append(m.RotateCalls, rotateCall{User: userName, Password: newPassword})
+	if m.RotateErr != nil && (m.RotateErrOnCall == 0 || len(m.RotateCalls) == m.RotateErrOnCall) {
+		return m.RotateErr
+	}
+	return nil
+}
+
 func (m *MockDB) Close() error {
+	return nil
+}
+
+// fakeSecretStore is an in-memory SecretStore with per-operation error
+// injection. It models a single app path (tests exercise one app at a time)
+// and records the paths it was addressed with for assertion.
+type fakeSecretStore struct {
+	secrets map[string]string
+	folders map[string]bool
+
+	listErr, createErr, updateErr, deleteErr, folderErr error
+
+	lastPath      string
+	updatedKeys   []string
+	createdKeys   []string
+	deletedKeys   []string
+	folderDeleted bool
+}
+
+func newFakeSecretStore(seed map[string]string) *fakeSecretStore {
+	secrets := make(map[string]string, len(seed))
+	maps.Copy(secrets, seed)
+	return &fakeSecretStore{secrets: secrets, folders: map[string]bool{}}
+}
+
+func (f *fakeSecretStore) ListSecrets(_, path string) (map[string]string, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	f.lastPath = path
+	out := make(map[string]string, len(f.secrets))
+	maps.Copy(out, f.secrets)
+	return out, nil
+}
+
+func (f *fakeSecretStore) CreateSecret(_, path string, kv database.SecretKV) error {
+	if f.createErr != nil {
+		return f.createErr
+	}
+	f.lastPath = path
+	f.secrets[kv.Key] = kv.Value
+	f.createdKeys = append(f.createdKeys, kv.Key)
+	return nil
+}
+
+func (f *fakeSecretStore) UpdateSecret(_, path string, kv database.SecretKV) error {
+	if f.updateErr != nil {
+		return f.updateErr
+	}
+	f.lastPath = path
+	f.secrets[kv.Key] = kv.Value
+	f.updatedKeys = append(f.updatedKeys, kv.Key)
+	return nil
+}
+
+func (f *fakeSecretStore) DeleteSecret(_, _, key string) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
+	delete(f.secrets, key)
+	f.deletedKeys = append(f.deletedKeys, key)
+	return nil
+}
+
+func (f *fakeSecretStore) CreateFolder(_, name string) error {
+	if f.folderErr != nil {
+		return f.folderErr
+	}
+	f.folders[name] = true
+	return nil
+}
+
+func (f *fakeSecretStore) FolderExists(_, name string) (bool, error) {
+	return f.folders[name], nil
+}
+
+func (f *fakeSecretStore) DeleteFolder(_, name string) error {
+	delete(f.folders, name)
+	f.folderDeleted = true
 	return nil
 }
 
@@ -43,7 +145,16 @@ func newTestProvisioner(mockDB *MockDB, engine string, engineCfg config.Database
 		DB:        mockDB,
 		Secrets:   nil, // Intentionally nil: provisioning must not panic offline
 		Logger:    log.New(io.Discard),
-		ProjectID: "test-project",
+		Engine:    engine,
+		EngineCfg: engineCfg,
+	})
+}
+
+func newTestProvisionerWithStore(mockDB *MockDB, store SecretStore, engine string, engineCfg config.DatabaseConfig) *Provisioner {
+	return NewProvisioner(ProvisionerDeps{
+		DB:        mockDB,
+		Secrets:   store,
+		Logger:    log.New(io.Discard),
 		Engine:    engine,
 		EngineCfg: engineCfg,
 	})
@@ -214,4 +325,107 @@ func TestSanitizeAppName(t *testing.T) {
 			t.Errorf("sanitizeAppName(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
+}
+
+// TestProvisioner_Run_ReturnsCredentialsOnSyncFailure pins the Phase 0
+// contract: when the database is created but the sync fails, Run returns the
+// result ALONGSIDE the error — the result carries the only copy of the
+// generated password and the caller must be able to surface it.
+func TestProvisioner_Run_ReturnsCredentialsOnSyncFailure(t *testing.T) {
+	mockDB := &MockDB{}
+	store := newFakeSecretStore(nil)
+	store.createErr = errFakeSync
+	p := newTestProvisionerWithStore(mockDB, store, database.EnginePostgres, config.DatabaseConfig{
+		DatabaseHostname: "localhost", DatabasePort: 5432,
+	})
+
+	result, err := p.Run(context.Background(), ProvisionRequest{AppName: "myapp"})
+	if err == nil {
+		t.Fatal("expected an error when the sync fails")
+	}
+	if result == nil {
+		t.Fatal("expected a non-nil result carrying the credentials")
+	}
+	if result.Synced {
+		t.Error("expected Synced=false")
+	}
+	if result.Credentials.Password == "" {
+		t.Error("result must carry the generated password — it exists nowhere else")
+	}
+}
+
+func TestProvisioner_ResolveApp(t *testing.T) {
+	logger := log.New(io.Discard)
+
+	t.Run("not found", func(t *testing.T) {
+		p := NewProvisioner(ProvisionerDeps{Secrets: newFakeSecretStore(nil), Logger: logger})
+		_, err := p.ResolveApp("ghost", "dev")
+		if err == nil || !strings.Contains(err.Error(), "not found") {
+			t.Errorf("expected not-found error, got %v", err)
+		}
+	})
+
+	t.Run("incomplete secrets", func(t *testing.T) {
+		p := NewProvisioner(ProvisionerDeps{
+			Secrets: newFakeSecretStore(map[string]string{database.SecretKeyHost: "h"}),
+			Logger:  logger,
+		})
+		_, err := p.ResolveApp("myapp", "dev")
+		if err == nil || !strings.Contains(err.Error(), "incomplete secrets") {
+			t.Errorf("expected incomplete-secrets error, got %v", err)
+		}
+	})
+
+	t.Run("resolves recorded names", func(t *testing.T) {
+		p := NewProvisioner(ProvisionerDeps{Secrets: newFakeSecretStore(seedSecrets()), Logger: logger})
+		creds, err := p.ResolveApp("myapp", "dev")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if creds.Name != "myapp_db" || creds.User != "myapp_user" {
+			t.Errorf("expected recorded names, got %+v", creds)
+		}
+	})
+}
+
+// TestProvisioner_Deprovision pins the cleanup contract after the SecretStore
+// refactor: database drop first, then every secret, then the folder — and a
+// post-drop failure names the partial state.
+func TestProvisioner_Deprovision(t *testing.T) {
+	logger := log.New(io.Discard)
+
+	t.Run("full cleanup", func(t *testing.T) {
+		mockDB := &MockDB{}
+		store := newFakeSecretStore(seedSecrets())
+		p := NewProvisioner(ProvisionerDeps{DB: mockDB, Secrets: store, Logger: logger})
+
+		creds := database.ParseCredentials(seedSecrets())
+		if err := p.Deprovision(context.Background(), "myapp", "dev", creds); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !mockDB.DeleteCalled || mockDB.DeletedName != "myapp_db" || mockDB.DeletedUser != "myapp_user" {
+			t.Errorf("expected DB.Delete with recorded names, got %+v", mockDB)
+		}
+		if len(store.secrets) != 0 {
+			t.Errorf("expected all secrets deleted, %d remain", len(store.secrets))
+		}
+		if !store.folderDeleted {
+			t.Error("expected the app folder to be deleted")
+		}
+	})
+
+	t.Run("partial failure is named", func(t *testing.T) {
+		mockDB := &MockDB{}
+		store := newFakeSecretStore(seedSecrets())
+		store.deleteErr = errFakeSync
+		p := NewProvisioner(ProvisionerDeps{DB: mockDB, Secrets: store, Logger: logger})
+
+		err := p.Deprovision(context.Background(), "myapp", "dev", database.ParseCredentials(seedSecrets()))
+		if err == nil || !strings.Contains(err.Error(), "database deleted, but failed to delete secret") {
+			t.Errorf("expected partial-state error, got %v", err)
+		}
+		if !mockDB.DeleteCalled {
+			t.Error("the database drop must happen before secret cleanup")
+		}
+	})
 }

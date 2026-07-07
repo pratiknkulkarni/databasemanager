@@ -3,29 +3,35 @@ package services
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/log"
-	infisical "github.com/infisical/go-sdk"
 	"github.com/praaatik/databasemanager/internal/config"
 	"github.com/praaatik/databasemanager/internal/database"
 )
+
+// rollbackTimeout bounds cleanup work that must survive a cancelled request
+// context (provision rollback, rotation rollback).
+const rollbackTimeout = 10 * time.Second
 
 // ProvisionerDeps are the explicit dependencies of the Provisioner. Secrets
 // may be nil, in which case provisioning proceeds without syncing to
 // Infisical and the result reports Synced=false.
 type ProvisionerDeps struct {
 	DB        database.Database
-	Secrets   infisical.InfisicalClientInterface
+	Secrets   SecretStore
 	Logger    *log.Logger
-	ProjectID string
 	Engine    string                // database.EnginePostgres or database.EngineMySQL
 	EngineCfg config.DatabaseConfig // the section the adapter dials with; source of recorded host/port
 }
 
 // Provisioner owns the database + secrets lifecycle for an app: provisioning
-// with credential sync, and deprovisioning with secret cleanup.
+// with credential sync, deprovisioning with secret cleanup, and password
+// rotation.
 type Provisioner struct {
 	deps ProvisionerDeps
 }
@@ -54,6 +60,11 @@ type ProvisionResult struct {
 	Options     database.ProvisionOptions
 	Credentials database.Credentials
 	Synced      bool
+}
+
+// secretPath returns the Infisical folder path for an app.
+func secretPath(appName string) string {
+	return "/" + appName
 }
 
 // Run provisions the database and syncs its credentials to Infisical.
@@ -168,6 +179,9 @@ func (p *Provisioner) credentials(opts database.ProvisionOptions) database.Crede
 	}
 }
 
+// syncToInfisical records the secret contract, one key at a time in the
+// contract's deterministic order, so a partial failure names exactly the key
+// that did not land.
 func (p *Provisioner) syncToInfisical(req ProvisionRequest, opts database.ProvisionOptions) error {
 	p.deps.Logger.Info("syncing secrets to infisical", "env", req.Environment)
 
@@ -175,49 +189,27 @@ func (p *Provisioner) syncToInfisical(req ProvisionRequest, opts database.Provis
 		return err
 	}
 
-	secretPath := fmt.Sprintf("/%s", req.AppName)
-
-	var secrets []infisical.BatchCreateSecret
+	path := secretPath(req.AppName)
 	for _, kv := range p.credentials(opts).ToSecrets() {
-		secrets = append(secrets, infisical.BatchCreateSecret{
-			SecretKey:   kv.Key,
-			SecretValue: kv.Value,
-		})
+		if err := p.deps.Secrets.CreateSecret(req.Environment, path, kv); err != nil {
+			return fmt.Errorf("failed to create secret %q: %w", kv.Key, err)
+		}
 	}
-
-	_, err := p.deps.Secrets.Secrets().Batch().Create(infisical.BatchCreateSecretsOptions{
-		ProjectID:   p.deps.ProjectID,
-		Environment: req.Environment,
-		SecretPath:  secretPath,
-		Secrets:     secrets,
-	})
-
-	return err
+	return nil
 }
 
 // ensureFolder creates the app folder. A creation failure is only tolerated
 // when the folder verifiably already exists; anything else fails the sync.
 func (p *Provisioner) ensureFolder(appName, environment string) error {
-	_, err := p.deps.Secrets.Folders().Create(infisical.CreateFolderOptions{
-		ProjectID:   p.deps.ProjectID,
-		Name:        appName,
-		Environment: environment,
-	})
+	err := p.deps.Secrets.CreateFolder(environment, appName)
 	if err == nil {
 		return nil
 	}
 
-	folders, listErr := p.deps.Secrets.Folders().List(infisical.ListFoldersOptions{
-		ProjectID:   p.deps.ProjectID,
-		Environment: environment,
-	})
-	if listErr == nil {
-		for _, folder := range folders {
-			if folder.Name == appName {
-				p.deps.Logger.Debug("infisical folder already exists", "app", appName)
-				return nil
-			}
-		}
+	exists, listErr := p.deps.Secrets.FolderExists(environment, appName)
+	if listErr == nil && exists {
+		p.deps.Logger.Debug("infisical folder already exists", "app", appName)
+		return nil
 	}
 
 	return fmt.Errorf("failed to create infisical folder %q: %w", appName, err)
@@ -230,12 +222,7 @@ func (p *Provisioner) ResolveApp(appName, environment string) (database.Credenti
 		return database.Credentials{}, fmt.Errorf("infisical client not initialized")
 	}
 
-	secretPath := fmt.Sprintf("/%s", appName)
-	secrets, err := p.deps.Secrets.Secrets().List(infisical.ListSecretsOptions{
-		Environment: environment,
-		ProjectID:   p.deps.ProjectID,
-		SecretPath:  secretPath,
-	})
+	secrets, err := p.deps.Secrets.ListSecrets(environment, secretPath(appName))
 	if err != nil {
 		return database.Credentials{}, fmt.Errorf("failed to fetch secrets for app %q: %w", appName, err)
 	}
@@ -243,17 +230,98 @@ func (p *Provisioner) ResolveApp(appName, environment string) (database.Credenti
 		return database.Credentials{}, fmt.Errorf("app %q not found in environment %q (no secrets found)", appName, environment)
 	}
 
-	secretMap := make(map[string]string, len(secrets))
-	for _, s := range secrets {
-		secretMap[s.SecretKey] = s.SecretValue
-	}
-
-	creds := database.ParseCredentials(secretMap)
+	creds := database.ParseCredentials(secrets)
 	if creds.Name == "" || creds.User == "" {
 		return database.Credentials{}, fmt.Errorf("incomplete secrets for app %q: missing DB_NAME or DB_USER. Unable to delete database without it", appName)
 	}
 
 	return creds, nil
+}
+
+// RotateResult reports the outcome of a password rotation.
+type RotateResult struct {
+	// Credentials carry the NEW password. When RolledBack is true the
+	// database was restored to the old password and the new one is dead —
+	// do not surface it.
+	Credentials database.Credentials
+	Synced      bool // the DB_PASSWORD update landed in Infisical
+	RolledBack  bool // sync failed and the database was restored to the old password
+}
+
+// Rotate issues a new password for the app's database user and records it in
+// Infisical. The database changes first; if the secret update then fails, the
+// old password is restored so a failed rotation leaves nothing changed. When
+// even that rollback fails, the returned result accompanies the error and
+// carries the new password — the caller owns the only copy and must surface
+// it.
+func (p *Provisioner) Rotate(ctx context.Context, appName, environment, overridePassword string) (*RotateResult, error) {
+	if p.deps.Secrets == nil {
+		return nil, fmt.Errorf("infisical client not initialized")
+	}
+
+	creds, err := p.ResolveApp(appName, environment)
+	if err != nil {
+		return nil, err
+	}
+	// Legacy apps predate DB_TYPE; the caller resolved the engine (possibly
+	// via --type), so backfill it for downstream consumers such as the
+	// post-rotation connectivity check.
+	if creds.Type == "" {
+		creds.Type = p.deps.Engine
+	}
+
+	newPassword := overridePassword
+	if newPassword == "" {
+		newPassword, err = generateRandomPassword(16)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	p.deps.Logger.Info("rotating password", "app", appName, "user", creds.User)
+
+	if err := p.deps.DB.RotatePassword(ctx, creds.User, newPassword); err != nil {
+		return nil, fmt.Errorf("failed to apply new password: %w", err)
+	}
+	p.deps.Logger.Info("password applied to database user", "user", creds.User)
+
+	oldPassword := creds.Password
+	creds.Password = newPassword
+	result := &RotateResult{Credentials: creds}
+
+	kv := database.SecretKV{Key: database.SecretKeyPassword, Value: newPassword}
+	// Update in place; a missing DB_PASSWORD secret (the lost-password
+	// recovery case) is created instead.
+	var syncErr error
+	if oldPassword == "" {
+		syncErr = p.deps.Secrets.CreateSecret(environment, secretPath(appName), kv)
+	} else {
+		syncErr = p.deps.Secrets.UpdateSecret(environment, secretPath(appName), kv)
+	}
+	if syncErr == nil {
+		result.Synced = true
+		p.deps.Logger.Info("DB_PASSWORD updated in Infisical", "app", appName)
+		return result, nil
+	}
+
+	p.deps.Logger.Error("new password was applied to the database but not recorded in Infisical",
+		"app", appName, "err", syncErr)
+
+	if oldPassword != "" {
+		// Restore the recorded password so a failed rotation changes nothing.
+		// Fresh context: the request context may already be cancelled.
+		rollbackCtx, cancel := context.WithTimeout(context.Background(), rollbackTimeout)
+		defer cancel()
+		if rbErr := p.deps.DB.RotatePassword(rollbackCtx, creds.User, oldPassword); rbErr != nil {
+			p.deps.Logger.Error("rollback to the previous password also failed", "err", rbErr)
+		} else {
+			result.RolledBack = true
+			return result, fmt.Errorf("infisical update failed (database password restored, nothing changed): %w", syncErr)
+		}
+	}
+
+	// The new password is live on the database and recorded nowhere else.
+	return result, fmt.Errorf("infisical update failed and the database keeps the new password: %w", syncErr)
 }
 
 // Deprovision drops the database and user named by the resolved credentials,
@@ -268,35 +336,21 @@ func (p *Provisioner) Deprovision(ctx context.Context, appName, environment stri
 		return fmt.Errorf("failed to delete database: %w", err)
 	}
 
-	secretPath := fmt.Sprintf("/%s", appName)
-	secrets, err := p.deps.Secrets.Secrets().List(infisical.ListSecretsOptions{
-		Environment: environment,
-		ProjectID:   p.deps.ProjectID,
-		SecretPath:  secretPath,
-	})
+	path := secretPath(appName)
+	secrets, err := p.deps.Secrets.ListSecrets(environment, path)
 	if err != nil {
 		return fmt.Errorf("database deleted, but failed to list secrets for cleanup: %w", err)
 	}
 
-	for _, secret := range secrets {
-		_, err := p.deps.Secrets.Secrets().Delete(infisical.DeleteSecretOptions{
-			Environment: environment,
-			ProjectID:   p.deps.ProjectID,
-			SecretPath:  secretPath,
-			SecretKey:   secret.SecretKey,
-		})
-		if err != nil {
-			return fmt.Errorf("database deleted, but failed to delete secret %q: %w", secret.SecretKey, err)
+	// Sorted for a deterministic deletion order (and stable partial-failure
+	// error messages).
+	for _, key := range slices.Sorted(maps.Keys(secrets)) {
+		if err := p.deps.Secrets.DeleteSecret(environment, path, key); err != nil {
+			return fmt.Errorf("database deleted, but failed to delete secret %q: %w", key, err)
 		}
 	}
 
-	_, err = p.deps.Secrets.Folders().Delete(infisical.DeleteFolderOptions{
-		FolderName:  appName,
-		ProjectID:   p.deps.ProjectID,
-		Environment: environment,
-		Path:        "/",
-	})
-	if err != nil {
+	if err := p.deps.Secrets.DeleteFolder(environment, appName); err != nil {
 		return fmt.Errorf("database deleted, but failed to delete app folder from Infisical: %w", err)
 	}
 

@@ -63,6 +63,7 @@ and securely managing their credentials in Infisical Secrets Manager.`,
 	cmd.AddCommand(newListCmd(container))
 	cmd.AddCommand(newConnCmd(container))
 	cmd.AddCommand(newTestCmd(container))
+	cmd.AddCommand(newRotateCmd(container))
 
 	return cmd
 }

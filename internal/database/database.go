@@ -77,6 +77,11 @@ type provisionState struct {
 type Database interface {
 	Provision(ctx context.Context, provisionOptions ProvisionOptions) error
 	Delete(ctx context.Context, databaseName, userName string) error
+	// RotatePassword sets a new password for an existing provisioned user.
+	// The user name arrives from Infisical, not the validated provision
+	// path, so implementations re-apply the identifier allowlist before any
+	// SQL is built — the same trust boundary as Delete.
+	RotatePassword(ctx context.Context, userName, newPassword string) error
 	Close() error
 }
 

@@ -202,6 +202,30 @@ func (p *PostgresClient) lockdownDatabase(ctx context.Context, opts ProvisionOpt
 	return nil
 }
 
+// RotatePassword sets a new password for an existing role. Live sessions are
+// unaffected: PostgreSQL checks passwords at connection time only.
+func (p *PostgresClient) RotatePassword(ctx context.Context, userName, newPassword string) error {
+	// The name arrives from Infisical, not the validated provision path —
+	// gate it on the identifier allowlist before it reaches any SQL.
+	if err := validateIdentifier("database user", userName, maxUserLen); err != nil {
+		return err
+	}
+	if newPassword == "" {
+		return fmt.Errorf("new password must not be empty")
+	}
+
+	if err := p.ensureConnection(ctx); err != nil {
+		return err
+	}
+
+	_, err := p.db.ExecContext(ctx, fmt.Sprintf("ALTER USER %s WITH PASSWORD %s",
+		pq.QuoteIdentifier(userName), pq.QuoteLiteral(newPassword)))
+	if err != nil {
+		return fmt.Errorf("failed to rotate password: %w", err)
+	}
+	return nil
+}
+
 func (p *PostgresClient) Delete(ctx context.Context, databaseName, userName string) error {
 	// The names arrive from Infisical, not from the validated provision path,
 	// so re-apply the identifier allowlist before they reach any SQL. Quoting

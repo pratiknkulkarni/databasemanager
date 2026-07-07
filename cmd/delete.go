@@ -1,9 +1,7 @@
 package cmd
 
 import (
-	"bufio"
 	"fmt"
-	"strings"
 
 	"github.com/praaatik/databasemanager/internal/app"
 	"github.com/praaatik/databasemanager/internal/database"
@@ -29,28 +27,22 @@ func newDeleteCmd(container *app.Container) *cobra.Command {
 			if container.Infisical == nil {
 				return fmt.Errorf("infisical client not initialized")
 			}
+			store := services.NewSecretStore(container.Infisical, container.Config.InfisicalProjectID)
 
 			// Resolve what was actually provisioned from Infisical — the
 			// recorded names, not guesses derived from the app name.
 			resolver := services.NewProvisioner(services.ProvisionerDeps{
-				Secrets:   container.Infisical,
-				Logger:    container.Logger,
-				ProjectID: container.Config.InfisicalProjectID,
+				Secrets: store,
+				Logger:  container.Logger,
 			})
 			creds, err := resolver.ResolveApp(appName, env)
 			if err != nil {
 				return err
 			}
 
-			engine := creds.Type
-			if engine == "" {
-				// Legacy apps provisioned before DB_TYPE existed.
-				if dbType == "" {
-					return fmt.Errorf("cannot determine database type for app %q: DB_TYPE secret is missing; pass --type", appName)
-				}
-				engine = dbType
-			} else if dbType != "" && dbType != engine {
-				return fmt.Errorf("DB_TYPE mismatch: stored type is '%s' but --type flag specifies '%s'", engine, dbType)
+			engine, err := resolveEngine(creds, dbType, appName)
+			if err != nil {
+				return err
 			}
 
 			engineCfg, _ := container.Config.Engine(engine)
@@ -62,12 +54,10 @@ func newDeleteCmd(container *app.Container) *cobra.Command {
 			defer func() { _ = db.Close() }()
 
 			if !force {
-				fmt.Fprintf(cmd.ErrOrStderr(),
-					"About to delete database %q and user %q for app %q (environment %q).\nType 'y' or 'yes' to confirm: ",
-					creds.Name, creds.User, appName, env)
-				line, _ := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
-				answer := strings.ToLower(strings.TrimSpace(line))
-				if answer != "y" && answer != "yes" {
+				prompt := fmt.Sprintf(
+					"About to delete database %q and user %q on host %q for app %q (environment %q).\nType 'y' or 'yes' to confirm: ",
+					creds.Name, creds.User, creds.Host, appName, env)
+				if !confirmAction(cmd, prompt) {
 					container.Logger.Info("deletion aborted", "app", appName)
 					return nil
 				}
@@ -75,9 +65,8 @@ func newDeleteCmd(container *app.Container) *cobra.Command {
 
 			provisioner := services.NewProvisioner(services.ProvisionerDeps{
 				DB:        db,
-				Secrets:   container.Infisical,
+				Secrets:   store,
 				Logger:    container.Logger,
-				ProjectID: container.Config.InfisicalProjectID,
 				Engine:    engine,
 				EngineCfg: engineCfg,
 			})

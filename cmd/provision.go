@@ -39,9 +39,8 @@ func newProvisionCmd(container *app.Container) *cobra.Command {
 
 			provisioner := services.NewProvisioner(services.ProvisionerDeps{
 				DB:        db,
-				Secrets:   container.Infisical,
+				Secrets:   services.NewSecretStore(container.Infisical, container.Config.InfisicalProjectID),
 				Logger:    container.Logger,
-				ProjectID: container.Config.InfisicalProjectID,
 				Engine:    dbType,
 				EngineCfg: engineCfg,
 			})
