@@ -36,10 +36,28 @@ type Config struct {
 	Postgres DatabaseConfig `mapstructure:"postgres"`
 	MySQL    DatabaseConfig `mapstructure:"mysql"`
 
-	InfisicalProjectID    string `mapstructure:"infisical_project_id"`
+	InfisicalProjectID string `mapstructure:"infisical_project_id"`
+	InfisicalSiteURL   string `mapstructure:"infisical_site_url"`
+
+	// Universal Auth credentials. Preferred for long-lived use: the client
+	// re-authenticates on every run, so nothing expires out from under it.
 	InfisicalClientID     string `mapstructure:"infisical_client_id"`
 	InfisicalClientSecret string `mapstructure:"infisical_client_secret"`
-	InfisicalSiteURL      string `mapstructure:"infisical_site_url"`
+
+	// InfisicalAccessToken is a pre-issued Token Auth access token, used as a
+	// bearer token directly. It takes precedence over the Universal Auth pair
+	// when set. Note that Token Auth tokens die permanently at their max TTL
+	// (30 days by default) and must then be reissued by hand.
+	InfisicalAccessToken string `mapstructure:"infisical_access_token"`
+}
+
+// AuthMethod reports which Infisical authentication method the configuration
+// selects. Token Auth wins when both are present.
+func (c *Config) AuthMethod() string {
+	if c.InfisicalAccessToken != "" {
+		return "token-auth"
+	}
+	return "universal-auth"
 }
 
 // Load reads the configuration from file, environment, and defaults.
@@ -111,11 +129,26 @@ func (c *Config) Validate() error {
 	if c.InfisicalProjectID == "" {
 		missing = append(missing, "infisical_project_id")
 	}
-	if c.InfisicalClientID == "" {
-		missing = append(missing, "infisical_client_id")
+
+	// A JWT in the client-secret field means a Token Auth access token was
+	// pasted where a Universal Auth secret belongs. Authenticating with it
+	// fails as an opaque 401 from the universal-auth login endpoint, so name
+	// the mistake here instead.
+	if looksLikeJWT(c.InfisicalClientSecret) {
+		return errors.New("infisical_client_secret holds a JWT, which is a Token Auth access token, " +
+			"not a Universal Auth client secret: move it to infisical_access_token, or create a " +
+			"Universal Auth credential for the identity and use its client ID and secret")
 	}
-	if c.InfisicalClientSecret == "" {
-		missing = append(missing, "infisical_client_secret")
+
+	// Either auth method is acceptable; Token Auth needs only the token,
+	// Universal Auth needs both halves of the pair.
+	if c.InfisicalAccessToken == "" {
+		if c.InfisicalClientID == "" {
+			missing = append(missing, "infisical_client_id")
+		}
+		if c.InfisicalClientSecret == "" {
+			missing = append(missing, "infisical_client_secret")
+		}
 	}
 
 	// A config with no engine section is valid: list/conn/test only need
@@ -149,6 +182,7 @@ func envBoundKeys() []string {
 		"infisical_project_id",
 		"infisical_client_id",
 		"infisical_client_secret",
+		"infisical_access_token",
 		"infisical_site_url",
 	}
 	for _, engine := range []string{"postgres", "mysql"} {
@@ -157,6 +191,13 @@ func envBoundKeys() []string {
 		}
 	}
 	return keys
+}
+
+// looksLikeJWT reports whether s has the shape of a JWT: three base64url
+// segments and the standard compact-serialization header prefix. Infisical
+// client secrets are opaque hex strings, so the two never collide.
+func looksLikeJWT(s string) bool {
+	return strings.HasPrefix(s, "eyJ") && strings.Count(s, ".") == 2
 }
 
 func validateDBConfig(engine string, db DatabaseConfig) error {

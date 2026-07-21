@@ -105,3 +105,59 @@ func TestConfig_Validate(t *testing.T) {
 		})
 	}
 }
+
+// TestConfig_Validate_AuthMethods covers the two accepted machine-identity
+// credential shapes and the misconfiguration that motivated them: a Token Auth
+// access token pasted into the Universal Auth client-secret field, which the
+// API rejects as an opaque 401.
+func TestConfig_Validate_AuthMethods(t *testing.T) {
+	const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJhdXRoTWV0aG9kIjoidG9rZW4tYXV0aCJ9.sig"
+
+	tests := []struct {
+		name       string
+		cfg        Config
+		wantErr    bool
+		wantMethod string
+	}{
+		{
+			name:       "universal auth pair is accepted",
+			cfg:        Config{InfisicalProjectID: "proj", InfisicalClientID: "id", InfisicalClientSecret: "secret"},
+			wantMethod: "universal-auth",
+		},
+		{
+			name:       "access token alone is accepted",
+			cfg:        Config{InfisicalProjectID: "proj", InfisicalAccessToken: jwt},
+			wantMethod: "token-auth",
+		},
+		{
+			name:       "access token takes precedence over the pair",
+			cfg:        Config{InfisicalProjectID: "proj", InfisicalClientID: "id", InfisicalClientSecret: "secret", InfisicalAccessToken: jwt},
+			wantMethod: "token-auth",
+		},
+		{
+			name:    "jwt in the client secret field is rejected",
+			cfg:     Config{InfisicalProjectID: "proj", InfisicalClientID: "id", InfisicalClientSecret: jwt},
+			wantErr: true,
+		},
+		{
+			name:    "no credentials at all is rejected",
+			cfg:     Config{InfisicalProjectID: "proj"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cfg.Validate()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("Validate() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if got := tt.cfg.AuthMethod(); got != tt.wantMethod {
+				t.Errorf("AuthMethod() = %q, want %q", got, tt.wantMethod)
+			}
+		})
+	}
+}

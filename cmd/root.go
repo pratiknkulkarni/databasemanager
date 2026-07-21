@@ -46,7 +46,16 @@ and securely managing their credentials in Infisical Secrets Manager.`,
 
 			client, err := infisical.NewClient(cmd.Context(), cfg)
 			if err != nil {
-				container.Logger.Warn("infisical unavailable; continuing without secret sync", "err", err)
+				// Degrading to offline is intentional, but the reason must not
+				// be swallowed: a 401 here means the credentials are wrong for
+				// the auth method in use, which is otherwise invisible until
+				// secrets silently stop syncing.
+				container.Logger.Warn("infisical authentication failed; continuing without secret sync",
+					"auth_method", cfg.AuthMethod(),
+					"site_url", cfg.InfisicalSiteURL,
+					"err", err)
+				container.Logger.Warn("if this is a 401, check that the identity's configured auth method " +
+					"matches the credentials in your config file")
 			} else {
 				container.Infisical = client
 			}
