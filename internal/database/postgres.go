@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +18,17 @@ import (
 // configuration does not set one: encryption is required, defeating passive
 // interception, without demanding a verifiable certificate chain.
 const defaultPostgresSSLMode = "require"
+
+// Dial budgets. These bound the wait on an unreachable server, which would
+// otherwise be the OS TCP timeout — minutes, or unbounded against a host that
+// silently drops packets. The admin dial gets the longer budget because it
+// runs once per invocation; the app-credential check is a connectivity probe
+// and should report failure promptly. Both mirror the MySQL adapter, which
+// already sets these on its driver config.
+const (
+	connectTimeout    = 10 * time.Second
+	appConnectTimeout = 5 * time.Second
+)
 
 type PostgresClient struct {
 	cfg config.DatabaseConfig
@@ -44,14 +56,20 @@ func quotePostgresDSNValue(v string) string {
 }
 
 // dsn builds the admin DSN, connecting to the given database name.
+//
+// connect_timeout bounds the TCP dial. Without it libpq waits on the OS
+// default, which against a host that drops packets rather than refusing them
+// — a firewalled database, a stale address — means the CLI hangs indefinitely
+// instead of reporting that the server is unreachable.
 func (p *PostgresClient) dsn(dbName string) string {
-	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s connect_timeout=%d",
 		quotePostgresDSNValue(p.cfg.DatabaseHostname),
 		p.cfg.DatabasePort,
 		quotePostgresDSNValue(p.cfg.DatabaseUser),
 		quotePostgresDSNValue(p.cfg.DatabasePassword),
 		quotePostgresDSNValue(dbName),
-		quotePostgresDSNValue(p.sslMode()))
+		quotePostgresDSNValue(p.sslMode()),
+		int(connectTimeout.Seconds()))
 }
 
 func (p *PostgresClient) ensureConnection(ctx context.Context) error {
@@ -318,6 +336,7 @@ func testPostgresAppConnection(ctx context.Context, creds Credentials, sslMode s
 	}
 	q := url.Values{}
 	q.Set("sslmode", sslMode)
+	q.Set("connect_timeout", strconv.Itoa(int(appConnectTimeout.Seconds())))
 	u.RawQuery = q.Encode()
 
 	appDB, err := sql.Open("postgres", u.String())
