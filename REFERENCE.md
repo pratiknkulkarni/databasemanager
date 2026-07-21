@@ -1,4 +1,9 @@
-# databasemanager
+# databasemanager: full reference
+
+Exhaustive reference for every flag, secret key, exit code and edge case.
+Start with [`README.md`](README.md) for an overview and the common workflows.
+
+---
 
 A single-shot CLI that provisions **isolated PostgreSQL and MySQL databases** — one database,
 one owning user, privilege-hardened — and records the resulting credentials as secrets in
@@ -169,9 +174,16 @@ Configuration comes from a **YAML file**, **environment variables**, or both
 ```yaml
 # --- Infisical (required for all commands) ---
 infisical_project_id: "your-project-id"
+infisical_site_url: "https://app.infisical.com"   # optional; defaults to Infisical Cloud
+
+# Universal Auth (recommended): re-authenticates every run, nothing expires.
 infisical_client_id: "machine-identity-client-id"
 infisical_client_secret: "machine-identity-client-secret"
-infisical_site_url: "https://app.infisical.com"   # optional; defaults to Infisical Cloud
+
+# Token Auth (alternative): a pre-issued access token, used as-is. Supply this
+# *instead of* the pair above; it wins if both are set. Note the token dies
+# permanently at its max TTL (30 days default) and must be reissued by hand.
+# infisical_access_token: "eyJhbGciOi…"
 
 # --- Engine sections (each optional as a whole; required fields if present) ---
 postgres:
@@ -197,8 +209,9 @@ mysql:
 | Key | Required | Default | Meaning |
 |---|---|---|---|
 | `infisical_project_id` | **yes** | — | Infisical project that stores app secrets |
-| `infisical_client_id` | **yes** | — | Universal Auth machine-identity client ID |
-| `infisical_client_secret` | **yes** | — | Universal Auth machine-identity client secret |
+| `infisical_client_id` | one of† | — | Universal Auth machine-identity client ID |
+| `infisical_client_secret` | one of† | — | Universal Auth machine-identity client secret. Must be the UA secret, **not** an access token — a JWT here is rejected at startup with a pointer to `infisical_access_token` |
+| `infisical_access_token` | one of† | — | Token Auth pre-issued access token, used directly as a bearer token. Takes precedence over the UA pair |
 | `infisical_site_url` | no | Infisical Cloud | Self-hosted Infisical URL |
 | `<engine>.database_hostname` | if section present | — | DB server host the admin connection dials; also recorded as `DB_HOST` for apps |
 | `<engine>.database_port` | if section present | — | DB server port; also recorded as `DB_PORT` |
@@ -207,6 +220,12 @@ mysql:
 | `<engine>.database_name` | if section present | — | Database the admin connection attaches to (`postgres` / `mysql` typically) |
 | `<engine>.database_sslmode` | no | `require` (pg) / `skip-verify` (mysql) | Transport encryption. Postgres: libpq values `disable\|require\|verify-ca\|verify-full`. MySQL: same vocabulary mapped onto the driver (`disable/false`→off, `require/skip-verify`→encrypted without cert verification, `verify-ca/verify-full/true`→full verification). Setting `disable` logs a loud warning on every dial |
 | `mysql.database_user_host` | no | `%` | Host part of the provisioned account (`'user'@'<host>'`). Scope it (e.g. `10.0.%`) so app accounts aren't reachable network-wide. **Keep it stable** — `delete` drops `'user'@'<configured host>'`, so changing it later orphans accounts created under the old value |
+
+† Supply **either** the `infisical_client_id` + `infisical_client_secret` pair (Universal Auth)
+**or** `infisical_access_token` (Token Auth). Whichever you choose, the machine identity must
+also be **added to the project** under *Project → Access Control → Machine Identities*.
+Org-level membership is not enough: authentication succeeds but every secret call returns
+`403 ProjectMembershipNotFound`.
 
 A config with **no engine section at all is valid** — `list`, `conn`, and `test` only need
 Infisical. Commands that need an engine get a clear error
@@ -221,6 +240,8 @@ runs fine with **no config file at all**:
 export DATABASEMANAGER_INFISICAL_PROJECT_ID="…"
 export DATABASEMANAGER_INFISICAL_CLIENT_ID="…"
 export DATABASEMANAGER_INFISICAL_CLIENT_SECRET="…"
+# …or, for Token Auth instead of the pair above:
+# export DATABASEMANAGER_INFISICAL_ACCESS_TOKEN="eyJhbGciOi…"
 export DATABASEMANAGER_POSTGRES_DATABASE_HOSTNAME="db.internal"
 export DATABASEMANAGER_POSTGRES_DATABASE_PORT="5432"
 export DATABASEMANAGER_POSTGRES_DATABASE_USER="postgres"

@@ -6,7 +6,7 @@ integration suite) remains open. The `secretStore` port recommended in §1.6 was
 pulled into Phase 1 as designed. Written 2026-07-07 against the post-hardening
 tree (branch `harden/tls-injection-masking`).
 Companion to [`ARCHITECTURE.md`](ARCHITECTURE.md) (invariants referenced as §11.*) and
-[`README.md`](README.md) (gap table this design executes).
+[`REFERENCE.md`](REFERENCE.md) (gap table this design executes).
 
 Two features, one document, because they share their hardest parts:
 
