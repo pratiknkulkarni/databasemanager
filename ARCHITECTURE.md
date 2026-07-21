@@ -1,13 +1,15 @@
-# databasemanager — Architecture (as-built)
+# databasemanager — Architecture
 
-**Status:** Describes the system after the 2026-07 structural refactor, which executed the
-defect register (§10) produced by the architecture audit of commit `d60754c`. Every register
-entry carries its outcome; the handful of deliberate behavior changes are listed in §12.
+How the system is put together: the composition root, the boundaries between
+packages, and the invariants each boundary holds. Read [`README.md`](README.md)
+first for what the tool does and why.
 
-A subsequent **security-hardening pass (2026-07-05)** closed the findings of an offensive
-audit — transport encryption, delete-path input validation, injection-safe DSN/URI
-construction, and reliable secret masking. Those changes are recorded in §13, with their
-config, invariant, and behavior impacts folded into §6.4, §7, §8, §11, and §12.
+This describes the code as it stands. Two rounds of change are worth knowing
+about because they explain why some things look the way they do: a structural
+refactor that moved the provisioning lifecycle behind a service layer, and a
+security pass that added transport encryption, input validation on the delete
+path, injection-safe DSN and URI construction, and secret masking. Both are
+recorded with their outcomes in §10 and §13.
 
 ---
 
