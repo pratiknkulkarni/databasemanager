@@ -3,9 +3,9 @@ package cmd
 import (
 	"fmt"
 
-	"github.com/praaatik/databasemanager/internal/app"
-	"github.com/praaatik/databasemanager/internal/database"
-	"github.com/praaatik/databasemanager/internal/services"
+	"github.com/pratiknkulkarni/databasemanager/internal/app"
+	"github.com/pratiknkulkarni/databasemanager/internal/database"
+	"github.com/pratiknkulkarni/databasemanager/internal/services"
 	"github.com/spf13/cobra"
 )
 

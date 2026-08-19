@@ -2,7 +2,7 @@ package services
 
 import (
 	infisical "github.com/infisical/go-sdk"
-	"github.com/praaatik/databasemanager/internal/database"
+	"github.com/pratiknkulkarni/databasemanager/internal/database"
 )
 
 // SecretStore is the narrow port over Infisical that the provisioning

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/praaatik/databasemanager/internal/config"
+	"github.com/pratiknkulkarni/databasemanager/internal/config"
 )
 
 // TestPostgresDSN_QuotesValuesAndDefaultsSecure proves the admin DSN quotes

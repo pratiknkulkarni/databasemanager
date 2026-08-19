@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/praaatik/databasemanager/internal/database"
+	"github.com/pratiknkulkarni/databasemanager/internal/database"
 )
 
 // TestResolveEngine pins the shared engine-resolution policy: the stored

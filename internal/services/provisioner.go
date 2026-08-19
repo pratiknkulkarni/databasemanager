@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/charmbracelet/log"
-	"github.com/praaatik/databasemanager/internal/config"
-	"github.com/praaatik/databasemanager/internal/database"
+	"github.com/pratiknkulkarni/databasemanager/internal/config"
+	"github.com/pratiknkulkarni/databasemanager/internal/database"
 )
 
 // rollbackTimeout bounds cleanup work that must survive a cancelled request

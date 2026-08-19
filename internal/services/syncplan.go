@@ -1,7 +1,7 @@
 package services
 
 import (
-	"github.com/praaatik/databasemanager/internal/database"
+	"github.com/pratiknkulkarni/databasemanager/internal/database"
 )
 
 // syncPlan is the computed reconciliation between the secrets Infisical

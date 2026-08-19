@@ -7,9 +7,9 @@ import (
 	"syscall"
 
 	"github.com/charmbracelet/log"
-	"github.com/praaatik/databasemanager/cmd"
-	"github.com/praaatik/databasemanager/internal/app"
-	"github.com/praaatik/databasemanager/internal/logger"
+	"github.com/pratiknkulkarni/databasemanager/cmd"
+	"github.com/pratiknkulkarni/databasemanager/internal/app"
+	"github.com/pratiknkulkarni/databasemanager/internal/logger"
 )
 
 func main() {

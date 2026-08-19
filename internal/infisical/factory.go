@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	infisical "github.com/infisical/go-sdk"
-	"github.com/praaatik/databasemanager/internal/config"
+	"github.com/pratiknkulkarni/databasemanager/internal/config"
 )
 
 // NewClient constructs an authenticated Infisical client. The context ties the

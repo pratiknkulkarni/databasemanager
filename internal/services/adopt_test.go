@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/praaatik/databasemanager/internal/config"
-	"github.com/praaatik/databasemanager/internal/database"
+	"github.com/pratiknkulkarni/databasemanager/internal/config"
+	"github.com/pratiknkulkarni/databasemanager/internal/database"
 )
 
 // TestProvisioner_Run_Adopt_ReconcilesRecordedApp drives the State A/B

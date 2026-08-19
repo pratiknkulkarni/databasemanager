@@ -10,9 +10,9 @@ import (
 	"github.com/atotto/clipboard"
 	infisical "github.com/infisical/go-sdk"
 	"github.com/jedib0t/go-pretty/v6/table"
-	"github.com/praaatik/databasemanager/internal/app"
-	"github.com/praaatik/databasemanager/internal/config"
-	"github.com/praaatik/databasemanager/internal/database"
+	"github.com/pratiknkulkarni/databasemanager/internal/app"
+	"github.com/pratiknkulkarni/databasemanager/internal/config"
+	"github.com/pratiknkulkarni/databasemanager/internal/database"
 	"github.com/spf13/cobra"
 )
 

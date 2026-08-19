@@ -5,9 +5,9 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/log"
-	"github.com/praaatik/databasemanager/internal/app"
-	"github.com/praaatik/databasemanager/internal/config"
-	"github.com/praaatik/databasemanager/internal/infisical"
+	"github.com/pratiknkulkarni/databasemanager/internal/app"
+	"github.com/pratiknkulkarni/databasemanager/internal/config"
+	"github.com/pratiknkulkarni/databasemanager/internal/infisical"
 	"github.com/spf13/cobra"
 )
 
@@ -73,6 +73,7 @@ and securely managing their credentials in Infisical Secrets Manager.`,
 	cmd.AddCommand(newConnCmd(container))
 	cmd.AddCommand(newTestCmd(container))
 	cmd.AddCommand(newRotateCmd(container))
+	cmd.AddCommand(newVersionCmd())
 
 	return cmd
 }

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	mysqldriver "github.com/go-sql-driver/mysql"
-	"github.com/praaatik/databasemanager/internal/config"
+	"github.com/pratiknkulkarni/databasemanager/internal/config"
 )
 
 // defaultMySQLUserHost is the host part of a provisioned account when the

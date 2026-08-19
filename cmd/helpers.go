@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/praaatik/databasemanager/internal/database"
+	"github.com/pratiknkulkarni/databasemanager/internal/database"
 	"github.com/spf13/cobra"
 )
 

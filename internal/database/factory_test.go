@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/praaatik/databasemanager/internal/config"
+	"github.com/pratiknkulkarni/databasemanager/internal/config"
 )
 
 func TestEngines_Sorted(t *testing.T) {

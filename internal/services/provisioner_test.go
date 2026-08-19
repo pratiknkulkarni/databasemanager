@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/charmbracelet/log"
-	"github.com/praaatik/databasemanager/internal/config"
-	"github.com/praaatik/databasemanager/internal/database"
+	"github.com/pratiknkulkarni/databasemanager/internal/config"
+	"github.com/pratiknkulkarni/databasemanager/internal/database"
 )
 
 // errFakeSync is the injected failure used across store-backed tests.

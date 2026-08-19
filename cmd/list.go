@@ -10,8 +10,8 @@ import (
 	infisical "github.com/infisical/go-sdk"
 	"github.com/infisical/go-sdk/packages/models"
 	"github.com/jedib0t/go-pretty/v6/table"
-	"github.com/praaatik/databasemanager/internal/app"
-	"github.com/praaatik/databasemanager/internal/config"
+	"github.com/pratiknkulkarni/databasemanager/internal/app"
+	"github.com/pratiknkulkarni/databasemanager/internal/config"
 	"github.com/spf13/cobra"
 )
 

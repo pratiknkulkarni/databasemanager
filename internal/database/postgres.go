@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/lib/pq"
-	"github.com/praaatik/databasemanager/internal/config"
+	"github.com/pratiknkulkarni/databasemanager/internal/config"
 )
 
 // defaultPostgresSSLMode is the transport-security posture used when the

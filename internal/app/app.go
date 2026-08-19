@@ -3,7 +3,7 @@ package app
 import (
 	"github.com/charmbracelet/log"
 	infisical "github.com/infisical/go-sdk"
-	"github.com/praaatik/databasemanager/internal/config"
+	"github.com/pratiknkulkarni/databasemanager/internal/config"
 )
 
 // Container holds the process-wide dependencies wired at the composition

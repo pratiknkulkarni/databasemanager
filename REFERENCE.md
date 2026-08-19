@@ -134,14 +134,14 @@ $ databasemanager conn billing-api
 Requires **Go 1.25+**.
 
 ```bash
-git clone https://github.com/praaatik/databasemanager
+git clone https://github.com/pratiknkulkarni/databasemanager
 cd databasemanager
 
 make build            # → ./databasemanager
 # or
 go build -o dbm .     # any binary name you like
 # or
-go install github.com/praaatik/databasemanager@latest
+go install github.com/pratiknkulkarni/databasemanager@latest
 ```
 
 Verify:

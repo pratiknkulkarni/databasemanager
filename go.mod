@@ -1,4 +1,4 @@
-module github.com/praaatik/databasemanager
+module github.com/pratiknkulkarni/databasemanager
 
 go 1.25.0
 

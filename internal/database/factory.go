@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/praaatik/databasemanager/internal/config"
+	"github.com/pratiknkulkarni/databasemanager/internal/config"
 )
 
 // Supported engine names. These are the values accepted by --type flags and
