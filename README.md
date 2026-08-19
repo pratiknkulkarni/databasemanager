@@ -97,12 +97,30 @@ Later on:
 
 ## Building
 
-    git clone https://github.com/praaatik/databasemanager
+    git clone https://github.com/pratiknkulkarni/databasemanager
     cd databasemanager
     make build
 
 That leaves a `databasemanager` binary in the current directory. There is
 nothing else to install and no runtime dependencies.
+
+If you would rather not clone it, and you have Go installed:
+
+    go install github.com/pratiknkulkarni/databasemanager@latest
+
+Either way, `databasemanager version` prints what you ended up with:
+
+    databasemanager v1.0.0
+      commit:  1f0c3a0e...
+      built:   2026-08-19T04:22:05Z
+      go:      go1.26.5
+      platform: linux/amd64
+
+`make build` stamps the version, commit and build date in through the linker.
+A `go install` has no linker flags, so it reads the module version and the VCS
+stamps the toolchain records instead, and prints those. `version` is also the
+one command that does not load the config file or reach for Infisical, so it
+still answers on a machine that is not set up yet.
 
 
 ## Configuration
@@ -388,3 +406,9 @@ Things I know are missing, in roughly the order they annoy me:
   and which invariants each boundary is holding.
 - [`HARDENING_PLAYBOOK.md`](HARDENING_PLAYBOOK.md) walks through exercising
   each of the security behaviours yourself, against a real server.
+
+---
+
+Developed on a self-hosted [Gitea](https://gitea.15092021.xyz/pratik/databasemanager) that runs in
+my homelab; the copy on GitHub is a read-only mirror of it, pushed on every commit.
+Issues and pull requests are welcome on the GitHub side and I will port them across.
