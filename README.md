@@ -410,5 +410,5 @@ Things I know are missing, in roughly the order they annoy me:
 ---
 
 Developed on a self-hosted [Gitea](https://gitea.15092021.xyz/pratik/databasemanager) that runs in
-my homelab; the copy on GitHub is a read-only mirror of it, pushed on every commit.
+my homelab; the copy on [GitHub](https://github.com/pratiknkulkarni/databasemanager) is a read-only mirror of it, pushed on every commit.
 Issues and pull requests are welcome on the GitHub side and I will port them across.
